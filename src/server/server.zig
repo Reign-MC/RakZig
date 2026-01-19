@@ -13,7 +13,7 @@ pub const Options = struct {
     address: []const u8 = "0.0.0.0",
     port: u16 = 19132,
     tickRate: u16 = 20,
-    maxConnections: i64 = 20,
+    comptime maxConnections: i64 = 20,
 };
 
 pub const Server = struct {
@@ -23,7 +23,7 @@ pub const Server = struct {
     running: bool,
     tickThread: ?Thread,
     connections: std.AutoHashMap(u64, Connection),
-    connectionsMutex: Mutex,
+    // connectionsMutex: Mutex,
     allocator: std.mem.Allocator,
     connectCb: ?*const fn (*Connection) void = null,
     disconnectCb: ?*const fn (*Connection) void = null,
@@ -37,7 +37,7 @@ pub const Server = struct {
             .guid = 0x123456789,
             .tickThread = null,
             .connections = std.AutoHashMap(u64, Connection).init(allocator),
-            .connectionsMutex = Mutex{},
+            // .connectionsMutex = Mutex{},
             .allocator = allocator,
         };
     }
@@ -51,51 +51,63 @@ pub const Server = struct {
     }
 
     fn tick(self: *Server) void {
-        while (self.running) {
-            self.connectionsMutex.lock();
+        // while (self.running) {
+        // const startTime = std.time.nanotime();
 
-            var toRemove = self.allocator.alloc(u64, @intCast(self.options.maxConnections)) catch |err| {
-                std.debug.print("Error allocating toRemove: {any}\n", .{err});
-                continue;
-            };
-            defer self.allocator.free(toRemove);
+        var conns: [self.options.maxConnections]*Connection = undefined;
+        var count: usize = 0;
+        var toRemove: [self.options.maxConnections]u64 = undefined;
+        var removeCount: usize = 0;
 
-            var removeCount: usize = 0;
-
-            {
-                var iter = self.connections.iterator();
-                while (iter.next()) |entry| {
-                    if (entry.value_ptr.active) {
-                        entry.value_ptr.tick();
-                    } else if (removeCount < toRemove.len) {
-                        toRemove[removeCount] = @intCast(entry.key_ptr.*);
-                        removeCount += 1;
-                    }
+        // self.connectionsMutex.lock();
+        var iter = self.connections.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value_ptr.*.active) {
+                if (count < conns.len) {
+                    conns[count] = entry.value_ptr;
+                    count += 1;
                 }
+            } else {
+                toRemove[removeCount] = entry.key_ptr.*;
+                removeCount += 1;
             }
-
-            for (toRemove[0..removeCount]) |key| {
-                if (self.connections.getPtr(key)) |conn| {
-                    conn.deinit();
-                    _ = self.connections.remove(key);
-                }
-            }
-
-            self.connectionsMutex.unlock();
-
-            std.Thread.sleep(std.time.ns_per_s / @as(u64, self.options.tickRate));
         }
+        // self.connectionsMutex.unlock();
+
+        for (conns[0..count]) |conn| {
+            conn.tick();
+        }
+
+        // self.connectionsMutex.lock();
+        for (toRemove[0..removeCount]) |key| {
+            if (self.connections.getPtr(key)) |conn| {
+                conn.deinit();
+                _ = self.connections.remove(key);
+            }
+        }
+        // self.connectionsMutex.unlock();
+
+        // const elapsed = std.time.nanotime() - startTime;
+        // if (elapsed < tickNs) {
+        // std.Thread.sleep(tickNs - elapsed);
+        // }
+        // }
     }
 
     pub fn start(self: *Server) !void {
         self.running = true;
-        self.tickThread = try Thread.spawn(.{}, tick, .{self});
+        // Not needed anymore
+        // self.tickThread = try Thread.spawn(.{}, tick, .{self});
     }
 
-    fn processIncomingPackets(self: *Server, buffer: []u8) !void {
+    fn processIncomingPackets(self: *Server, buffer: []u8) !bool {
+        var hasRead = false;
+
         while (true) {
             const recvOpt = self.socket.receiveFrom(buffer) catch break;
             if (recvOpt == null) break;
+
+            hasRead = true;
 
             const recvResult = recvOpt.?;
             const packetData = buffer[0..recvResult.len];
@@ -112,68 +124,58 @@ pub const Server = struct {
 
             const packetId = tempId.?;
 
+            var connPtr: ?*Connection = null;
+            // self.connectionsMutex.lock();
+            connPtr = self.connections.getPtr(addrKey);
+            // self.connectionsMutex.unlock();
+
             switch (packetId) {
                 ID.OpenConnectionRequest1 => {
                     var reply = Messages.ConnectionReply1.init(self.guid, false, 0, 1492);
-
                     const replyData = reply.serialize() catch |err| {
-                        std.debug.print("Error trying to serialize connection reply 1: {any}", .{err});
-                        return;
+                        std.debug.print("Serialize error: {any}\n", .{err});
+                        continue;
                     };
-
                     self.send(replyData, recvResult.addr);
                 },
                 ID.OpenConnectionRequest2 => {
                     const request = Messages.ConnectionRequest2.deserialize(packetData) catch |err| {
-                        std.debug.print("Error trying to deserializing connection request 2: {any}", .{err});
-                        return;
+                        std.debug.print("Deserialize error: {any}\n", .{err});
+                        continue;
                     };
 
                     const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 0);
-
                     var reply = Messages.ConnectionReply2.init(self.guid, address, request.mtuSize, false);
-
                     const replyData = reply.serialize() catch |err| {
-                        std.debug.print("Error trying to serialize connection reply 2: {any}", .{err});
-                        return;
+                        std.debug.print("Serialize error: {any}\n", .{err});
+                        continue;
                     };
-
                     self.send(replyData, recvResult.addr);
 
-                    self.connectionsMutex.lock();
-                    defer self.connectionsMutex.unlock();
-
-                    if (self.connections.contains(addrKey)) {
-                        std.debug.print("Connection already made\n", .{});
-                        return;
+                    if (connPtr == null) {
+                        // self.connectionsMutex.lock();
+                        if (!self.connections.contains(addrKey)) {
+                            const connection = Connection.init(self, recvResult.addr, request.mtuSize, request.clientGUID) catch |err| {
+                                std.debug.print("Connection init error: {any}\n", .{err});
+                                self.connectionsMutex.unlock();
+                                continue;
+                            };
+                            try self.connections.put(addrKey, connection);
+                        }
+                        // self.connectionsMutex.unlock();
                     }
-
-                    const connection = Connection.init(self, recvResult.addr, request.mtuSize, request.clientGUID) catch |err| {
-                        std.debug.print("Error creating connection: {any}\n", .{err});
-                        return;
-                    };
-
-                    try self.connections.put(addrKey, connection);
                 },
                 ID.FrameSet => {
-                    self.connectionsMutex.lock();
-                    defer self.connectionsMutex.unlock();
-
-                    if (self.connections.getPtr(addrKey)) |conn| {
+                    if (connPtr) |conn| {
                         conn.handleFrameSet(packetData) catch |err| {
-                            std.debug.print("Error handling frameset: {any}\n", .{err});
-                            return;
+                            std.debug.print("FrameSet error: {any}\n", .{err});
                         };
                     }
                 },
                 ID.ACK => {
-                    self.connectionsMutex.lock();
-                    defer self.connectionsMutex.unlock();
-
-                    if (self.connections.getPtr(addrKey)) |conn| {
+                    if (connPtr) |conn| {
                         conn.handleAck(packetData) catch |err| {
-                            std.debug.print("Error handling ack: {any}\n", .{err});
-                            return;
+                            std.debug.print("ACK error: {any}\n", .{err});
                         };
                     }
                 },
@@ -182,15 +184,30 @@ pub const Server = struct {
                 },
             }
         }
+
+        return hasRead;
     }
 
     pub fn listen(self: *Server) !void {
-        var buffer: [1500]u8 = undefined;
+        // Could be smaller but just incase of weird large fragmented packets
+        var buffer: [4096]u8 = undefined;
+
+        const tickNs = @as(u64, std.time.ns_per_s) / @as(u64, self.options.tickRate);
         while (true) {
-            self.processIncomingPackets(buffer[0..]) catch |err| {
-                std.debug.print("Caught error while trying to process packets {any}.", .{err});
-                continue;
-            };
+            const startTime = std.time.nanoTimestamp();
+
+            const hadPackets = self.processIncomingPackets(buffer[0..]) catch false;
+            if (!hadPackets) {
+                // not needed unless we do multi threading
+                // std.Thread.sleep(1 * std.time.ns_per_ms);
+            }
+
+            self.tick();
+
+            const elapsed = std.time.nanoTimestamp() - startTime;
+            if (elapsed < @as(i128, tickNs)) {
+                std.Thread.sleep(tickNs - @as(u64, @intCast(elapsed)));
+            }
         }
     }
 
