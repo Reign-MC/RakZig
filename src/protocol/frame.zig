@@ -71,7 +71,10 @@ pub const Frame = struct {
         const lengthBits = try reader.readU16BE();
         const payloadLength = (lengthBits + 7) / 8;
 
-        if (payloadLength + reader.pos > reader.buf.len) return error.FrameBiggerThenReader;
+        if (payloadLength + reader.pos > reader.buf.len) {
+            std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
+            return error.FrameBiggerThenReader;
+        }
 
         var orderChannel: ?u8 = null;
         var reliableFrameIndex: ?u32 = null;
