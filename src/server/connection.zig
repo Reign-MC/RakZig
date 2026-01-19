@@ -446,14 +446,14 @@ pub const Connection = struct {
         }
     }
 
-    fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {
+    pub fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {
         const len = payload.len;
         const owned = try self.server.allocator.alloc(u8, len);
         std.mem.copyForwards(u8, owned, payload);
         return Frame.init(.ReliableOrdered, owned, 0, null, null, null, null, true);
     }
 
-    fn frameFromPayloadWithReliability(self: *Connection, payload: []const u8, reliability: Protocol.Reliability) !Frame {
+    pub fn frameFromPayloadWithReliability(self: *Connection, payload: []const u8, reliability: Protocol.Reliability) !Frame {
         const len = payload.len;
         const owned = try self.server.allocator.alloc(u8, len);
         std.mem.copyForwards(u8, owned, payload);
