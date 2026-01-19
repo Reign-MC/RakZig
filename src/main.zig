@@ -24,7 +24,10 @@ pub fn main() void {
 
     const allocator = gpa.allocator();
 
-    var server = Server.init(.{}, allocator) catch |err| {
+    var server = Server.init(.{
+        .advertisement = "ReignMC",
+        .protocolVersion = 10,
+    }, allocator) catch |err| {
         std.debug.print("Error initializing server: {}", .{err});
         return;
     };

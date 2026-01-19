@@ -16,7 +16,7 @@ pub const ConnectedPing = struct {
     }
 
     pub fn serialize(self: *ConnectedPing, writer: *Writer) ![]u8 {
-        try writer.writeU8(@intFromEnum(ID.ConnectedPingPong));
+        try writer.writeU8(@intFromEnum(ID.ConnectedPing));
         try writer.writeI64BE(self.timestamp);
 
         return writer.buf[0..writer.pos];

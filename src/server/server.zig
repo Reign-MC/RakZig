@@ -2,6 +2,9 @@ const std = @import("std");
 const Thread = std.Thread;
 const Mutex = Thread.Mutex;
 
+const BinaryUtils = @import("BinaryUtils");
+const Writer = BinaryUtils.BinaryWriter;
+
 const Socket = @import("../socket/mod.zig").Socket;
 const Protocol = @import("../protocol/mod.zig");
 const ID = Protocol.ID;
@@ -10,10 +13,13 @@ const Messages = Protocol.Messages;
 const Connection = @import("connection.zig").Connection;
 
 pub const Options = struct {
+    protocolVersion: u8 = 11,
     address: []const u8 = "0.0.0.0",
     port: u16 = 19132,
     tickRate: u16 = 20,
-    comptime maxConnections: i64 = 20,
+    advertisement: []const u8 = "",
+    timeout: i64 = 10_000,
+    maxConnections: usize = 20,
 };
 
 pub const Server = struct {
@@ -21,7 +27,7 @@ pub const Server = struct {
     socket: Socket,
     guid: u64,
     running: bool,
-    tickThread: ?Thread,
+    // tickThread: ?Thread,
     connections: std.AutoHashMap(u64, Connection),
     // connectionsMutex: Mutex,
     allocator: std.mem.Allocator,
@@ -35,7 +41,7 @@ pub const Server = struct {
             .socket = try Socket.init(options.address, options.port),
             .running = false,
             .guid = 0x123456789,
-            .tickThread = null,
+            // .tickThread = null,
             .connections = std.AutoHashMap(u64, Connection).init(allocator),
             // .connectionsMutex = Mutex{},
             .allocator = allocator,
@@ -53,10 +59,17 @@ pub const Server = struct {
     fn tick(self: *Server) void {
         // while (self.running) {
         // const startTime = std.time.nanotime();
-
-        var conns: [self.options.maxConnections]*Connection = undefined;
+        var conns = self.allocator.alloc(*Connection, self.options.maxConnections) catch |err| {
+            std.debug.print("Error ticking server: {any}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(conns);
         var count: usize = 0;
-        var toRemove: [self.options.maxConnections]u64 = undefined;
+        var toRemove = self.allocator.alloc(u64, self.options.maxConnections) catch |err| {
+            std.debug.print("Error ticking server: {any}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(toRemove);
         var removeCount: usize = 0;
 
         // self.connectionsMutex.lock();
@@ -130,7 +143,37 @@ pub const Server = struct {
             // self.connectionsMutex.unlock();
 
             switch (packetId) {
+                ID.UnconnectedPing => {
+                    var buf: [1500]u8 = undefined;
+                    var writer = Writer.init(buf[0..]);
+
+                    var pong = Messages.UnconnectedPong.init(std.time.milliTimestamp(), self.guid, self.options.advertisement);
+                    const pongData = pong.serialize(&writer) catch |err| {
+                        std.debug.print("Serialize error: {any}\n", .{err});
+                        continue;
+                    };
+
+                    self.send(pongData, recvResult.addr);
+                },
                 ID.OpenConnectionRequest1 => {
+                    var buf: [1500]u8 = undefined;
+                    const request = Messages.ConnectionRequest1.deserialize(packetData) catch {
+                        return hasRead;
+                    };
+
+                    if (request.protocol != self.options.protocolVersion) {
+                        std.debug.print("Protocol mismatch: {d} != {d}\n", .{ request.protocol, self.options.protocolVersion });
+                        var writer = Writer.init(buf[0..]);
+
+                        var incompatible = Messages.IncompatibleProtocolVersion.init(self.options.protocolVersion, self.guid);
+                        const incompatibleData = incompatible.serialize(&writer) catch {
+                            return hasRead;
+                        };
+
+                        self.send(incompatibleData, recvResult.addr);
+                        return hasRead;
+                    }
+
                     var reply = Messages.ConnectionReply1.init(self.guid, false, 0, 1492);
                     const replyData = reply.serialize() catch |err| {
                         std.debug.print("Serialize error: {any}\n", .{err});
@@ -175,6 +218,13 @@ pub const Server = struct {
                 ID.ACK => {
                     if (connPtr) |conn| {
                         conn.handleAck(packetData) catch |err| {
+                            std.debug.print("ACK error: {any}\n", .{err});
+                        };
+                    }
+                },
+                ID.NACK => {
+                    if (connPtr) |conn| {
+                        conn.handleNack(packetData) catch |err| {
                             std.debug.print("ACK error: {any}\n", .{err});
                         };
                     }

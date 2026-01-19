@@ -9,10 +9,10 @@ const Server = @import("../../server/server.zig").Server;
 const Constants = @import("../constants.zig");
 
 pub const ConnectionRequest1 = struct {
-    protocol: u16,
+    protocol: u8,
     mtu: u16,
 
-    pub fn init(protocol: u16, mtu: u16) ConnectionRequest1 {
+    pub fn init(protocol: u8, mtu: u16) ConnectionRequest1 {
         return .{
             .protocol = protocol,
             .mtu = mtu,
@@ -26,7 +26,7 @@ pub const ConnectionRequest1 = struct {
         try Magic.read(&reader);
         const protocol = try reader.readU8();
 
-        var mtuSize: u16 = reader.buf.len;
+        var mtuSize: u16 = @intCast(reader.buf.len - reader.pos);
         if (mtuSize + Constants.UDP_HEADER_SIZE <= Constants.MAX_MTU_SIZE) {
             mtuSize = mtuSize + Constants.UDP_HEADER_SIZE;
         } else {

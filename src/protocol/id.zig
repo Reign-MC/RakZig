@@ -1,6 +1,7 @@
 pub const ID = enum(u8) {
-    ConnectedPingPong = 0x00,
+    ConnectedPing = 0x00,
     UnconnectedPing = 0x01,
+    ConnectedPong = 0x03,
 
     ConnectedPingOpenConnections = 0x02,
 
@@ -27,8 +28,9 @@ pub const ID = enum(u8) {
 
     pub fn fromU8(value: u8) ?ID {
         return switch (value) {
-            0x00 => .ConnectedPingPong,
+            0x00 => .ConnectedPing,
             0x01 => .UnconnectedPing,
+            0x03 => .ConnectedPong,
             0x1C => .UnconnectedPong,
             0x02 => .ConnectedPingOpenConnections,
 

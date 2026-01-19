@@ -47,7 +47,7 @@ pub const Connection = struct {
     pub fn tick(self: *Connection) void {
         if (!self.active) return;
 
-        if (self.lastReceive + 10000 < std.time.milliTimestamp()) {
+        if (self.lastReceive + self.server.options.timeout < std.time.milliTimestamp()) {
             self.active = false;
 
             if (self.server.disconnectCb) |callback| {
@@ -126,7 +126,7 @@ pub const Connection = struct {
         self.lastReceive = std.time.milliTimestamp();
 
         switch (packetId) {
-            ID.ConnectedPingPong => {
+            ID.ConnectedPing => {
                 const ping = try Messages.ConnectedPing.deserialize(payload);
 
                 var buffer = try self.server.allocator.alloc(u8, 128);
@@ -136,12 +136,13 @@ pub const Connection = struct {
                 var pong = Messages.ConnectedPong.init(ping.timestamp, std.time.milliTimestamp());
                 const serialized = try pong.serialize(&writer);
 
-                const frame = frameFromPayload(self, serialized) catch |err| {
+                const frame = self.frameFromPayloadWithReliability(serialized, .Unreliable) catch |err| {
                     std.debug.print("Failed to alloc frame payload: {any}\n", .{err});
                     return;
                 };
-                self.sendFrame(frame, .Immediate);
+                self.sendFrame(frame, .Normal);
             },
+            ID.ConnectedPong => {},
             ID.ConnectionRequest => {
                 var buffer = try self.server.allocator.alloc(u8, 512);
                 defer self.server.allocator.free(buffer);
@@ -152,7 +153,7 @@ pub const Connection = struct {
                 var reply = Messages.ConnectionRequestAccepted.init(self.address, 0, empty, request.timestamp, std.time.milliTimestamp());
                 const serialized = try reply.serialize(buffer[0..]);
 
-                const frame = frameFromPayloadWithReliability(self, serialized, .Unreliable) catch |err| {
+                const frame = self.frameFromPayloadWithReliability(serialized, .Unreliable) catch |err| {
                     std.debug.print("Failed to alloc frame payload: {any}\n", .{err});
                     return;
                 };
@@ -167,6 +168,14 @@ pub const Connection = struct {
             ID.GamePacket => {
                 if (self.gamePacketCb) |callback| {
                     callback(self, payload);
+                }
+            },
+            ID.DisconnectNotification => {
+                self.active = false;
+                self.connected = false;
+
+                if (self.server.disconnectCb) |callback| {
+                    callback(self);
                 }
             },
             else => {
@@ -197,6 +206,27 @@ pub const Connection = struct {
                     _ = self.state.outputBackup.remove(key);
                     self.server.allocator.free(frames);
                 }
+            }
+        }
+    }
+
+    pub fn handleNack(self: *Connection, payload: []const u8) !void {
+        if (!self.active) return;
+
+        var nack = try Messages.Ack.deserializeAlloc(payload, self.server.allocator);
+        defer nack.deinit(self.server.allocator);
+
+        var buffer: [1500]u8 = undefined;
+
+        for (nack.sequences) |seq| {
+            const frames = self.state.outputBackup.get(seq);
+            if (frames) |f| {
+                var writer = Writer.init(buffer[0..]);
+
+                var frameset = Messages.FrameSet.init(seq, f);
+                const serialized = frameset.serialize(&writer) catch continue;
+                self.send(serialized);
+                frameset.deinit(self.server.allocator);
             }
         }
     }
