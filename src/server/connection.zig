@@ -22,7 +22,8 @@ pub const Connection = struct {
     active: bool,
     state: ConnectionState,
     lastReceive: i64,
-    gamePacketCb: ?*const fn (*Connection, []const u8) void = null,
+    gamePacketCb: ?*const fn (*Connection, []const u8, ?*anyopaque) void = null,
+    gamePacketCtx: ?*anyopaque = null,
     lastPing: u64 = 0,
     pingInterval: u64 = 5000,
 
@@ -51,7 +52,7 @@ pub const Connection = struct {
             self.active = false;
 
             if (self.server.disconnectCb) |callback| {
-                callback(self);
+                callback(self, self.server.disconnectCtx);
             }
             return;
         }
@@ -162,12 +163,12 @@ pub const Connection = struct {
             ID.NewIncomingConnection => {
                 self.connected = true;
                 if (self.server.connectCb) |callback| {
-                    callback(self);
+                    callback(self, self.server.connectCtx);
                 }
             },
             ID.GamePacket => {
                 if (self.gamePacketCb) |callback| {
-                    callback(self, payload);
+                    callback(self, payload, self.gamePacketCtx);
                 }
             },
             ID.DisconnectNotification => {
@@ -175,7 +176,7 @@ pub const Connection = struct {
                 self.connected = false;
 
                 if (self.server.disconnectCb) |callback| {
-                    callback(self);
+                    callback(self, self.server.disconnectCtx);
                 }
             },
             else => {
@@ -694,8 +695,9 @@ pub const Connection = struct {
         self.sendFrame(frame, .Normal);
     }
 
-    pub fn onGamePacket(self: *Connection, cb: *const fn (*Connection, []const u8) void) void {
+    pub fn onGamePacket(self: *Connection, cb: *const fn (*Connection, []const u8, ?*anyopaque) void, ctx: ?*anyopaque) void {
         self.gamePacketCb = cb;
+        self.gamePacketCtx = ctx;
     }
 };
 

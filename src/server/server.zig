@@ -31,9 +31,10 @@ pub const Server = struct {
     connections: std.AutoHashMap(u64, Connection),
     // connectionsMutex: Mutex,
     allocator: std.mem.Allocator,
-    connectCb: ?*const fn (*Connection) void = null,
-    disconnectCb: ?*const fn (*Connection) void = null,
-    packetCb: ?*const fn (*Connection, []const u8) void = null,
+    connectCb: ?*const fn (*Connection, ?*anyopaque) void = null,
+    connectCtx: ?*anyopaque = null,
+    disconnectCb: ?*const fn (*Connection, ?*anyopaque) void = null,
+    disconnectCtx: ?*anyopaque = null,
 
     pub fn init(options: Options, allocator: std.mem.Allocator) !Server {
         return .{
@@ -289,15 +290,13 @@ pub const Server = struct {
         };
     }
 
-    pub fn onConnect(self: *Server, cb: *const fn (*Connection) void) void {
+    pub fn onConnect(self: *Server, cb: *const fn (*Connection, ?*anyopaque) void, ctx: ?*anyopaque) void {
         self.connectCb = cb;
+        self.connectCtx = ctx;
     }
 
-    pub fn onDisconnect(self: *Server, cb: *const fn (*Connection) void) void {
+    pub fn onDisconnect(self: *Server, cb: *const fn (*Connection, ?*anyopaque) void, ctx: ?*anyopaque) void {
         self.disconnectCb = cb;
-    }
-
-    pub fn onPacket(self: *Server, cb: *const fn (*Connection, []const u8) void) void {
-        self.packetCb = cb;
+        self.disconnectCtx = ctx;
     }
 };
