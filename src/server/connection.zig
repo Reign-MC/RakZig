@@ -143,13 +143,16 @@ pub const Connection = struct {
                 self.sendFrame(frame, .Immediate);
             },
             ID.ConnectionRequest => {
+                var buffer = try self.server.allocator.alloc(u8, 512);
+                defer self.server.allocator.free(buffer);
+
                 const request = try Messages.ConnectionRequest.deserialize(payload);
-                const empty = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 0);
+                const empty = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, self.server.options.port);
 
-                var reply = Messages.ConnectionRequestAccepted.init(empty, 0, empty, request.timestamp, std.time.milliTimestamp());
-                const serialized = try reply.serialize();
+                var reply = Messages.ConnectionRequestAccepted.init(self.address, 0, empty, request.timestamp, std.time.milliTimestamp());
+                const serialized = try reply.serialize(buffer[0..]);
 
-                const frame = frameFromPayload(self, serialized) catch |err| {
+                const frame = frameFromPayloadWithReliability(self, serialized, .Unreliable) catch |err| {
                     std.debug.print("Failed to alloc frame payload: {any}\n", .{err});
                     return;
                 };
@@ -417,6 +420,13 @@ pub const Connection = struct {
         const owned = try self.server.allocator.alloc(u8, len);
         std.mem.copyForwards(u8, owned, payload);
         return Frame.init(.ReliableOrdered, owned, 0, null, null, null, null, true);
+    }
+
+    fn frameFromPayloadWithReliability(self: *Connection, payload: []const u8, reliability: Protocol.Reliability) !Frame {
+        const len = payload.len;
+        const owned = try self.server.allocator.alloc(u8, len);
+        std.mem.copyForwards(u8, owned, payload);
+        return Frame.init(reliability, owned, 0, null, null, null, null, true);
     }
 
     pub fn sendFrame(self: *Connection, frame: Frame, priority: Priority) void {

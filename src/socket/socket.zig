@@ -23,7 +23,8 @@ pub const Socket = struct {
     fn parseAddr(host: []const u8) u32 {
         if (host.len == 0 or std.mem.eql(u8, host, "0.0.0.0")) return 0;
         if (builtin.os.tag == .windows) return ws2.inet_addr(host.ptr);
-        return posix.inet_addr(host.ptr);
+        const addr = std.net.Address.parseIp(host, 0) catch return 0;
+        return addr.in.sa.addr;
     }
 
     fn initWin(host: []const u8, port: u16) !ws2.SOCKET {
@@ -52,16 +53,16 @@ pub const Socket = struct {
     }
 
     fn initPosix(host: []const u8, port: u16) !usize {
-        const sock = try posix.socket(posix.AF.INET, posix.SOCK_DGRAM, 0);
+        const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
         const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
-        _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.O.NONBLOCK);
+        _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
 
-        var addr: posix.sockaddr_in = std.mem.zeroes(posix.sockaddr_in);
-        addr.sin_family = posix.AF.INET;
-        addr.sin_port = posix.htons(port);
-        addr.sin_addr.s_addr = parseAddr(host);
+        var addr: posix.sockaddr.in = std.mem.zeroes(posix.sockaddr.in);
+        addr.family = posix.AF.INET;
+        addr.port = std.mem.nativeToBig(u16, port);
+        addr.addr = parseAddr(host);
 
-        try posix.bind(sock, @ptrCast(&addr), @sizeOf(posix.sockaddr_in));
+        try posix.bind(sock, @ptrCast(&addr), @sizeOf(posix.sockaddr.in));
         return @intCast(sock);
     }
 
@@ -75,8 +76,8 @@ pub const Socket = struct {
     }
 
     fn receiveFromPosix(self: *Socket, buf: []u8) !?RecvResult {
-        var storage: posix.sockaddr_storage = undefined;
-        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr_storage);
+        var storage: posix.sockaddr.storage = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.storage);
 
         const n = posix.recvfrom(
             @intCast(self.handle),
@@ -91,10 +92,12 @@ pub const Socket = struct {
 
         if (n == 0) return null;
 
-        const addr = try std.net.Address.fromSockAddr(
-            @ptrCast(&storage),
-            addr_len,
+        const sa = @as(
+            *align(4) const std.posix.sockaddr,
+            @ptrCast(@alignCast(&storage)),
         );
+
+        const addr = std.net.Address.initPosix(sa);
 
         return .{
             .len = @intCast(n),
@@ -163,11 +166,13 @@ pub const Socket = struct {
     fn sendToPosix(self: *Socket, buf: []const u8, addr: std.net.Address) !void {
         const sent = try posix.sendto(
             @intCast(self.handle),
-            buf.ptr,
-            buf.len,
+            buf,
             0,
-            @ptrCast(&addr),
-            @sizeOf(posix.sockaddr_in),
+            @as(
+                *align(4) const posix.sockaddr,
+                @ptrCast(@alignCast(&addr)),
+            ),
+            @sizeOf(posix.sockaddr.in),
         );
 
         if (sent == -1) return SocketError.ReceiveFailed;

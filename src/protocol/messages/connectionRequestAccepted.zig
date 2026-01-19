@@ -12,7 +12,6 @@ pub const ConnectionRequestAccepted = struct {
     addresses: std.net.Address,
     requestTimestamp: i64,
     timestamp: i64,
-    buf: [1500]u8 = undefined,
 
     pub fn init(address: std.net.Address, systemIndex: u16, addresses: std.net.Address, requestTimestamp: i64, timestamp: i64) ConnectionRequestAccepted {
         return .{
@@ -24,8 +23,8 @@ pub const ConnectionRequestAccepted = struct {
         };
     }
 
-    pub fn serialize(self: *ConnectionRequestAccepted) ![]const u8 {
-        var writer = Writer.init(self.buf[0..]);
+    pub fn serialize(self: *ConnectionRequestAccepted, buf: []u8) ![]const u8 {
+        var writer = Writer.init(buf[0..]);
 
         try writer.writeU8(@intFromEnum(ID.ConnectionRequestAccepted));
         try Address.init(self.address).write(&writer);
@@ -33,12 +32,12 @@ pub const ConnectionRequestAccepted = struct {
 
         var i: u8 = 0;
         while (i < 20) : (i += 1) {
-            try Address.init(self.address).write(&writer);
+            try Address.init(self.addresses).write(&writer);
         }
 
-        try writer.writeI64BE(self.requestTimestamp);
-        try writer.writeI64BE(self.timestamp);
+        try writer.writeLongBE(self.requestTimestamp);
+        try writer.writeLongBE(self.timestamp);
 
-        return writer.buf[0..writer.pos];
+        return buf[0..writer.pos];
     }
 };
