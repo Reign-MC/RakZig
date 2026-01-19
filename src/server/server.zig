@@ -239,9 +239,9 @@ pub const Server = struct {
         return hasRead;
     }
 
-    pub fn listen(self: *Server) !void {
+    pub fn listen(self: *Server, comptime bufferSize: u64) !void {
         // Could be smaller but just incase of weird large fragmented packets
-        var buffer: [4096]u8 = undefined;
+        var buffer: [bufferSize]u8 = undefined;
 
         const tickNs = @as(u64, std.time.ns_per_s) / @as(u64, self.options.tickRate);
         while (true) {

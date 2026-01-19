@@ -39,7 +39,7 @@ pub fn main() void {
         return;
     };
 
-    server.listen() catch |err| {
+    server.listen(4096) catch |err| {
         std.debug.print("Error listening: {}", .{err});
         return;
     };
