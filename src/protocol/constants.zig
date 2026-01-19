@@ -1,0 +1,4 @@
+pub const UDP_HEADER_SIZE = 28;
+pub const MAX_MTU_SIZE = 1492;
+pub const MAX_ACTIVE_FRAGMENTATIONS = 32;
+pub const MAX_ORDERING_QUEUE_SIZE = 64;
