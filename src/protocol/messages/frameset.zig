@@ -6,6 +6,7 @@ const Reader = BinaryUtils.BinaryReader;
 
 const ID = @import("../id.zig").ID;
 const Frame = @import("../frame.zig").Frame;
+const Reliability = @import("../reliability.zig").Reliability;
 
 pub const FrameSet = struct {
     sequenceNumber: u24,
@@ -47,6 +48,22 @@ pub const FrameSet = struct {
         var frames = std.ArrayList(Frame).initBuffer(&[_]Frame{});
 
         while (reader.pos < reader.buf.len) {
+            if (reader.pos + 3 > reader.buf.len) break;
+
+            const rawFlags: u8 = reader.buf[reader.pos];
+            const lengthBits: u16 = @as(u16, (reader.buf[reader.pos + 1] << 8) | reader.buf[reader.pos + 2]);
+            const payloadLength: usize = @as(usize, (lengthBits + 7) / 8);
+
+            const reliability: Reliability = @as(Reliability, @enumFromInt((rawFlags & 0b1110_0000) >> 5));
+
+            var required: usize = 1 + 2 + payloadLength;
+            if (reliability.isReliable()) required += 3;
+            if (reliability.isSequenced()) required += 3;
+            if (reliability.isOrdered()) required += 3 + 1;
+            if ((rawFlags & 0x10) != 0) required += 10;
+
+            if (reader.pos + required > reader.buf.len) break;
+
             const frame = try Frame.read(&reader);
             try frames.append(allocator, frame);
         }
