@@ -187,30 +187,38 @@ pub const Connection = struct {
     }
 
     pub fn handleSplitPacket(self: *Connection, splitID: u16, index: u16, total: u16, payload: []const u8) !?[]const u8 {
+        const headerSize: usize = 1 + 2 + 2 + 4;
+        if (payload.len < headerSize) return error.InvalidPacket;
+        const frameData = payload[headerSize..];
+
         const fragList = self.state.packetFragments.get(splitID);
         if (fragList == null) {
             var newList = try std.ArrayList([]const u8).initCapacity(self.server.allocator, @intCast(total));
-            try newList.append(self.server.allocator, payload);
+            while (newList.items.len <= index) {
+                try newList.append(self.server.allocator, &[_]u8{}); // pad
+            }
+            newList.items[@intCast(index)] = frameData;
             try self.state.packetFragments.put(splitID, newList);
             return null;
         }
 
         var list = fragList.?;
         while (list.items.len <= index) {
-            try list.append(self.server.allocator, &[0]u8{});
+            try list.append(self.server.allocator, &[_]u8{}); // pad
         }
-        list.items[@intCast(index)] = payload;
+        list.items[@intCast(index)] = frameData;
 
-        var received: bool = true;
+        // check if all fragments are received
+        var complete = true;
         for (list.items) |frag| {
             if (frag.len == 0) {
-                received = false;
+                complete = false;
                 break;
             }
         }
+        if (!complete) return null;
 
-        if (!received) return null;
-
+        // merge fragments
         var totalSize: usize = 0;
         for (list.items) |frag| totalSize += frag.len;
 
