@@ -124,6 +124,10 @@ pub const Connection = struct {
     }
 
     pub fn handlePacket(self: *Connection, payload: []const u8) !void {
+        if (payload.len == 0) {
+            return;
+        }
+
         const packetId: ID = ID.fromU8(payload[0]) orelse return;
         self.lastReceive = std.time.milliTimestamp();
 
