@@ -320,7 +320,11 @@ pub const Connection = struct {
 
         self.state.lastInputSequence = @intCast(sequence);
         for (set.frames) |frame| {
-            try self.handleFrame(frame);
+            if (frame.isSplit()) {
+                try self.handleSplitFrame(frame);
+            } else {
+                try self.handlePacket(frame.payload);
+            }
         }
 
         self.sendAck(sequence);
