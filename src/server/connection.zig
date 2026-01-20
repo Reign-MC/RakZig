@@ -416,63 +416,53 @@ pub const Connection = struct {
             return;
         };
 
+        std.debug.print("Handling split frame: {d}\n", .{splitInfo.id});
+
         const id = splitInfo.id;
-        const index = splitInfo.frameIndex;
-        const size = splitInfo.size;
-
-        const payloadLen = frame.payload.len;
-        const ownedPayload = try self.server.allocator.alloc(u8, payloadLen);
-        std.mem.copyForwards(u8, ownedPayload, frame.payload);
-
-        const frameCopy = Frame.init(
-            frame.reliability,
-            ownedPayload,
-            frame.orderChannel,
-            frame.reliableFrameIndex,
-            frame.sequenceFrameIndex,
-            frame.orderedFrameIndex,
-            frame.splitInfo,
-            true,
-        );
+        const index: u16 = @intCast(splitInfo.frameIndex);
+        const total = splitInfo.size;
 
         const fragmentMap = self.state.fragmentsQueue.get(id);
 
         if (fragmentMap == null) {
-            var newFragment = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try newFragment.put(@intCast(index), frameCopy);
-            try self.state.fragmentsQueue.put(id, newFragment);
+            var newMap = std.AutoHashMap(u16, Frame).init(self.server.allocator);
+            try newMap.put(index, frame);
+            try self.state.fragmentsQueue.put(id, newMap);
             return;
         }
 
-        var fragment = fragmentMap.?;
+        var map = fragmentMap.?;
+        try map.put(index, frame);
 
-        if (fragment.contains(@intCast(index))) {
-            self.server.allocator.free(ownedPayload);
-            return;
+        var complete = true;
+        for (0..total) |i| {
+            if (!map.contains(@intCast(i))) {
+                complete = false;
+                break;
+            }
+        }
+        if (!complete) return;
+
+        var totalSize: usize = 0;
+        for (0..total) |i| {
+            totalSize += map.get(@intCast(i)).?.payload.len;
         }
 
-        try fragment.put(@intCast(index), frameCopy);
-
-        if (fragment.count() != size) {
-            return;
+        var merged = try self.server.allocator.alloc(u8, totalSize);
+        var pos: usize = 0;
+        for (0..total) |i| {
+            var frag = map.get(@intCast(i)).?;
+            std.mem.copyForwards(u8, merged[pos .. pos + frag.payload.len], frag.payload);
+            pos += frag.payload.len;
+            if (frag.shouldFree) frag.deinit(self.server.allocator);
         }
 
-        var buffer = try self.server.allocator.alloc(u8, 1492);
-        defer self.server.allocator.free(buffer);
-        var writer = Writer.init(buffer[0..]);
+        map.deinit();
+        _ = self.state.fragmentsQueue.remove(id);
 
-        var i: u16 = 0;
-        while (i < size) : (i += 1) {
-            const part = fragment.get(i) orelse return;
-            try writer.write(part.payload);
-        }
-
-        const merged_len = writer.pos;
-        const merged_buf = try self.server.allocator.alloc(u8, merged_len);
-        std.mem.copyForwards(u8, merged_buf, writer.buf[0..merged_len]);
-        var mergedFrame = Frame.init(
+        const mergedFrame = Frame.init(
             frame.reliability,
-            merged_buf,
+            merged,
             frame.orderChannel,
             frame.reliableFrameIndex,
             frame.sequenceFrameIndex,
@@ -480,20 +470,86 @@ pub const Connection = struct {
             null,
             true,
         );
-        defer mergedFrame.deinit(self.server.allocator);
 
-        var iter = fragment.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.*.deinit(self.server.allocator);
-        }
-
-        fragment.deinit();
-        _ = self.state.fragmentsQueue.remove(id);
-
-        const rel = mergedFrame.reliability;
-        if (!rel.isSequenced() and !rel.isOrdered()) {
-            try self.handlePacket(mergedFrame.payload);
-        }
+        try self.handlePacket(mergedFrame.payload);
+        // const id = splitInfo.id;
+        // const index = splitInfo.frameIndex;
+        // const size = splitInfo.size;
+        //
+        // const payloadLen = frame.payload.len;
+        // const ownedPayload = try self.server.allocator.alloc(u8, payloadLen);
+        // std.mem.copyForwards(u8, ownedPayload, frame.payload);
+        //
+        // const frameCopy = Frame.init(
+        //     frame.reliability,
+        //     ownedPayload,
+        //     frame.orderChannel,
+        //     frame.reliableFrameIndex,
+        //     frame.sequenceFrameIndex,
+        //     frame.orderedFrameIndex,
+        //     frame.splitInfo,
+        //     true,
+        // );
+        //
+        // const fragmentMap = self.state.fragmentsQueue.get(id);
+        //
+        // if (fragmentMap == null) {
+        //     var newFragment = std.AutoHashMap(u16, Frame).init(self.server.allocator);
+        //     try newFragment.put(@intCast(index), frameCopy);
+        //     try self.state.fragmentsQueue.put(id, newFragment);
+        //     return;
+        // }
+        //
+        // var fragment = fragmentMap.?;
+        //
+        // if (fragment.contains(@intCast(index))) {
+        //     self.server.allocator.free(ownedPayload);
+        //     return;
+        // }
+        //
+        // try fragment.put(@intCast(index), frameCopy);
+        //
+        // if (fragment.count() != size) {
+        //     return;
+        // }
+        //
+        // var buffer = try self.server.allocator.alloc(u8, 1492);
+        // defer self.server.allocator.free(buffer);
+        // var writer = Writer.init(buffer[0..]);
+        //
+        // var i: u16 = 0;
+        // while (i < size) : (i += 1) {
+        //     const part = fragment.get(i) orelse return;
+        //     try writer.write(part.payload);
+        // }
+        //
+        // const merged_len = writer.pos;
+        // const merged_buf = try self.server.allocator.alloc(u8, merged_len);
+        // std.mem.copyForwards(u8, merged_buf, writer.buf[0..merged_len]);
+        // var mergedFrame = Frame.init(
+        //     frame.reliability,
+        //     merged_buf,
+        //     frame.orderChannel,
+        //     frame.reliableFrameIndex,
+        //     frame.sequenceFrameIndex,
+        //     frame.orderedFrameIndex,
+        //     null,
+        //     true,
+        // );
+        // defer mergedFrame.deinit(self.server.allocator);
+        //
+        // var iter = fragment.iterator();
+        // while (iter.next()) |entry| {
+        //     entry.value_ptr.*.deinit(self.server.allocator);
+        // }
+        //
+        // fragment.deinit();
+        // _ = self.state.fragmentsQueue.remove(id);
+        //
+        // const rel = mergedFrame.reliability;
+        // if (!rel.isSequenced() and !rel.isOrdered()) {
+        //     try self.handlePacket(mergedFrame.payload);
+        // }
     }
 
     pub fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {

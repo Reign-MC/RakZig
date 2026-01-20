@@ -75,7 +75,7 @@ pub const Frame = struct {
             return error.InvalidFrameLength;
         }
 
-        if (payloadLength - reader.pos > reader.buf.len) {
+        if (payloadLength > reader.buf.len - reader.pos) {
             std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
             return error.FrameBiggerThenReader;
         }
