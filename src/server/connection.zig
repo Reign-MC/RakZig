@@ -292,7 +292,7 @@ pub const Connection = struct {
         var splitIndex: ?u16 = null;
         var splitTotal: ?u16 = null;
 
-        if ((flags & 0x10) != 0) { // RakNet split flag
+        if ((flags & 0x10) != 0) {
             var reader = Reader.init(payload[1..]);
             splitID = @intCast(try reader.readU16BE());
             splitIndex = @intCast(try reader.readU16BE());
@@ -307,6 +307,8 @@ pub const Connection = struct {
                 return;
             } orelse return; // Wait for all fragments
         }
+
+        std.debug.print("flags={x}, splitID={?}, splitIndex={?}, splitTotal={?}, payload.len={d}\n", .{ flags, splitID, splitIndex, splitTotal, fullPayload.len });
 
         var set = try Messages.FrameSet.deserialize(fullPayload, self.server.allocator);
         defer set.deinit(self.server.allocator);
