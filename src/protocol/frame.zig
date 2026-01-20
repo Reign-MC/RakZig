@@ -65,16 +65,11 @@ pub const Frame = struct {
 
     pub fn read(reader: *Reader) !Frame {
         const rawFlags = try reader.readU8();
-        const reliability: Reliability = @as(Reliability, @enumFromInt((rawFlags & 0b1110_0000) >> 5));
+        const reliability: Reliability =
+            @as(Reliability, @enumFromInt((rawFlags & 0b1110_0000) >> 5));
         const flags = Flags.fromU8(rawFlags);
 
         const lengthBits = try reader.readU16BE();
-        const payloadLength = (lengthBits + 7) / 8;
-
-        if (payloadLength + reader.pos > reader.buf.len) {
-            std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
-            return error.FrameBiggerThenReader;
-        }
 
         var orderChannel: ?u8 = null;
         var reliableFrameIndex: ?u32 = null;
@@ -103,8 +98,31 @@ pub const Frame = struct {
             }
         }
 
+        if ((lengthBits & 7) != 0)
+            return error.InvalidFrameBitLength;
+
+        const payloadLength = lengthBits >> 3;
+        const remaining = reader.buf.len - reader.pos;
+
+        if (payloadLength > remaining) {
+            std.debug.print(
+                "Frame payload too big: payload={d}, remaining={d}\n",
+                .{ payloadLength, remaining },
+            );
+            return error.FrameBiggerThenReader;
+        }
+
         const payload = try reader.read(payloadLength);
-        return Frame.init(reliability, payload, orderChannel, reliableFrameIndex, sequenceFrameIndex, orderedFrameIndex, splitInfo, false);
+        return Frame.init(
+            reliability,
+            payload,
+            orderChannel,
+            reliableFrameIndex,
+            sequenceFrameIndex,
+            orderedFrameIndex,
+            splitInfo,
+            false,
+        );
     }
 
     fn buildFlags(self: *const Frame) u8 {

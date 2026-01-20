@@ -287,30 +287,7 @@ pub const Connection = struct {
 
         self.lastReceive = std.time.milliTimestamp();
 
-        const flags = payload[0];
-        var splitID: ?u16 = null;
-        var splitIndex: ?u16 = null;
-        var splitTotal: ?u16 = null;
-
-        if ((flags & 0x10) != 0) {
-            var reader = Reader.init(payload[1..]);
-            splitID = @intCast(try reader.readU16BE());
-            splitIndex = @intCast(try reader.readU16BE());
-            splitTotal = @intCast(try reader.readU32BE());
-        }
-
-        var fullPayload: []const u8 = payload;
-
-        if (splitID) |id| {
-            fullPayload = self.handleSplitPacket(id, splitIndex.?, splitTotal.?, payload) catch |err| {
-                std.debug.print("Failed to handle split packet: {any}\n", .{err});
-                return;
-            } orelse return; // Wait for all fragments
-        }
-
-        std.debug.print("flags={x}, splitID={?}, splitIndex={?}, splitTotal={?}, payload.len={d}\n", .{ flags, splitID, splitIndex, splitTotal, fullPayload.len });
-
-        var set = try Messages.FrameSet.deserialize(fullPayload, self.server.allocator);
+        var set = try Messages.FrameSet.deserialize(payload, self.server.allocator);
         defer set.deinit(self.server.allocator);
 
         const sequence = set.sequenceNumber;
