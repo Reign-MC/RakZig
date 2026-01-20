@@ -71,10 +71,13 @@ pub const Frame = struct {
         const lengthBits = try reader.readU16BE();
         const payloadLength = (lengthBits + 7) / 8;
 
-        if (payloadLength + reader.pos > reader.buf.len) {
-            std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
-            return error.FrameBiggerThenReader;
+        if (payloadLength == 0) {
+            return error.InvalidFrameLength;
         }
+        // if (payloadLength + reader.pos > reader.buf.len) {
+        //     std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
+        //     return error.FrameBiggerThenReader;
+        // }
 
         var orderChannel: ?u8 = null;
         var reliableFrameIndex: ?u32 = null;
@@ -103,7 +106,7 @@ pub const Frame = struct {
             }
         }
 
-        const payload = try reader.read(payloadLength);
+        const payload = try reader.read(reader.buf.len - reader.pos);
         return Frame.init(reliability, payload, orderChannel, reliableFrameIndex, sequenceFrameIndex, orderedFrameIndex, splitInfo, false);
     }
 
