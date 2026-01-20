@@ -75,11 +75,6 @@ pub const Frame = struct {
             return error.InvalidFrameLength;
         }
 
-        if (payloadLength > reader.buf.len - reader.pos) {
-            std.debug.print("Frame size = {d}, Reader size = {d}", .{ payloadLength + reader.pos, reader.buf.len });
-            return error.FrameBiggerThenReader;
-        }
-
         var orderChannel: ?u8 = null;
         var reliableFrameIndex: ?u32 = null;
         var sequenceFrameIndex: ?u32 = null;
