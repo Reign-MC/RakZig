@@ -78,13 +78,13 @@ pub const Frame = struct {
         var splitInfo: ?Frame.SplitInfo = null;
 
         if (reliability.isReliable()) {
-            reliableFrameIndex = try reader.readU24LE();
+            reliableFrameIndex = try reader.readU24BE();
         }
         if (reliability.isSequenced()) {
-            sequenceFrameIndex = try reader.readU24LE();
+            sequenceFrameIndex = try reader.readU24BE();
         }
         if (reliability.isOrdered()) {
-            orderedFrameIndex = try reader.readU24LE();
+            orderedFrameIndex = try reader.readU24BE();
             orderChannel = try reader.readU8();
         }
 
