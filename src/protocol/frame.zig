@@ -107,7 +107,10 @@ pub const Frame = struct {
             }
         }
 
-        const payload = try reader.read(payloadLength);
+        const remaining = reader.buf.len - reader.pos;
+        const toRead = if (payloadLength > remaining) remaining else payloadLength;
+
+        const payload = try reader.read(toRead);
         return Frame.init(reliability, payload, orderChannel, reliableFrameIndex, sequenceFrameIndex, orderedFrameIndex, splitInfo, false);
     }
 
