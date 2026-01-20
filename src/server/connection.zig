@@ -2,6 +2,7 @@ const std = @import("std");
 
 const BinaryUtils = @import("BinaryUtils");
 const Writer = BinaryUtils.BinaryWriter;
+const Reader = BinaryUtils.BinaryReader;
 
 const Server = @import("server.zig").Server;
 
@@ -185,6 +186,47 @@ pub const Connection = struct {
         }
     }
 
+    pub fn handleSplitPacket(self: *Connection, splitID: u16, index: u16, total: u16, payload: []const u8) !?[]const u8 {
+        const fragList = self.state.packetFragments.get(splitID);
+        if (fragList == null) {
+            var newList = try std.ArrayList([]const u8).initCapacity(self.server.allocator, @intCast(total));
+            try newList.append(self.server.allocator, payload);
+            try self.state.packetFragments.put(splitID, newList);
+            return null;
+        }
+
+        var list = fragList.?;
+        while (list.items.len <= index) {
+            try list.append(self.server.allocator, &[0]u8{});
+        }
+        list.items[@intCast(index)] = payload;
+
+        var received: bool = true;
+        for (list.items) |frag| {
+            if (frag.len == 0) {
+                received = false;
+                break;
+            }
+        }
+
+        if (!received) return null;
+
+        var totalSize: usize = 0;
+        for (list.items) |frag| totalSize += frag.len;
+
+        var merged = try self.server.allocator.alloc(u8, totalSize);
+        var pos: usize = 0;
+        for (list.items) |frag| {
+            std.mem.copyForwards(u8, merged[pos .. pos + frag.len], frag);
+            pos += frag.len;
+        }
+
+        list.deinit(self.server.allocator);
+        _ = self.state.packetFragments.remove(splitID);
+
+        return merged;
+    }
+
     pub fn handleAck(self: *Connection, payload: []const u8) !void {
         if (!self.active) return;
 
@@ -237,7 +279,28 @@ pub const Connection = struct {
 
         self.lastReceive = std.time.milliTimestamp();
 
-        var set = try Messages.FrameSet.deserialize(payload, self.server.allocator);
+        const flags = payload[0];
+        var splitID: ?u16 = null;
+        var splitIndex: ?u16 = null;
+        var splitTotal: ?u16 = null;
+
+        if ((flags & 0x10) != 0) { // RakNet split flag
+            var reader = Reader.init(payload[1..]);
+            splitID = @intCast(try reader.readU16BE());
+            splitIndex = @intCast(try reader.readU16BE());
+            splitTotal = @intCast(try reader.readU32BE());
+        }
+
+        var fullPayload: []const u8 = payload;
+
+        if (splitID) |id| {
+            fullPayload = self.handleSplitPacket(id, splitIndex.?, splitTotal.?, payload) catch |err| {
+                std.debug.print("Failed to handle split packet: {any}\n", .{err});
+                return;
+            } orelse return; // Wait for all fragments
+        }
+
+        var set = try Messages.FrameSet.deserialize(fullPayload, self.server.allocator);
         defer set.deinit(self.server.allocator);
 
         const sequence = set.sequenceNumber;
@@ -721,6 +784,7 @@ pub const ConnectionState = struct {
     inputOrderingQueue: std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)),
 
     fragmentsQueue: std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)),
+    packetFragments: std.AutoHashMap(u16, std.ArrayList([]const u8)),
 
     pub fn init(allocator: std.mem.Allocator) !ConnectionState {
         return ConnectionState{
@@ -741,6 +805,7 @@ pub const ConnectionState = struct {
             .inputOrderIndex = undefined,
             .inputOrderingQueue = std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)).init(allocator),
             .fragmentsQueue = std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)).init(allocator),
+            .packetFragments = std.AutoHashMap(u16, std.ArrayList([]const u8)).init(allocator),
         };
     }
 
@@ -792,5 +857,11 @@ pub const ConnectionState = struct {
             outerEntry.value_ptr.deinit();
         }
         self.fragmentsQueue.deinit();
+
+        var packetIter = self.packetFragments.iterator();
+        while (packetIter.next()) |entry| {
+            entry.value_ptr.deinit(allocator);
+        }
+        self.packetFragments.deinit();
     }
 };
