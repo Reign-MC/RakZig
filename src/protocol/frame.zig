@@ -130,7 +130,7 @@ pub const Frame = struct {
         if (self.reliability.isOrdered()) {
             if (self.orderedFrameIndex == null) return error.MissingOrderedIndex;
             if (self.orderChannel == null) return error.MissingOrderChannel;
-            // Wrap to avoid int overflow
+
             const index24: u24 = @intCast(self.orderedFrameIndex.? % 0x1000000);
             try writer.writeU24LE(index24);
             try writer.writeU8(self.orderChannel.?);

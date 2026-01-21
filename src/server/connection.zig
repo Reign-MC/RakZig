@@ -104,7 +104,6 @@ pub const Connection = struct {
             var buffer: [1024]u8 = undefined;
             var writer = Writer.init(buffer[0..]);
 
-            // Should work if not change to .dupe
             buffer[0] = @intFromEnum(ID.NACK);
 
             const serialized = nack.serialize(&writer) catch {
