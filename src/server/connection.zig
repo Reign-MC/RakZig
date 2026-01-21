@@ -411,7 +411,7 @@ pub const Connection = struct {
 
         i = 0;
         while (i < total) : (i += 1) {
-            var frag = map_ptr.get(i).?;
+            const frag = map_ptr.get(i).?;
             std.mem.copyForwards(
                 u8,
                 merged[pos .. pos + frag.payload.len],
