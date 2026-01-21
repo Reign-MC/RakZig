@@ -387,8 +387,8 @@ pub const Connection = struct {
             return;
         }
 
-        var owned = frame;
-        owned.shouldFree = true;
+        const owned = frame;
+        // owned.shouldFree = true;
         try mapPtr.put(@intCast(split.frameIndex), owned);
 
         var totalFragments: u16 = 0;
