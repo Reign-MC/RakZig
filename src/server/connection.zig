@@ -274,9 +274,10 @@ pub const Connection = struct {
         }
 
         self.state.lastInputSequence = @intCast(sequence);
-        for (set.frames) |*frame| {
+        for (set.frames) |*frameConst| {
+            var frame: *Frame = @constCast(frameConst); // make it mutable
             if (frame.isSplit()) {
-                frame.shouldFree = false; // ownership moves to fragmentsQueue
+                frame.shouldFree = false;
             }
             try self.handleFrame(frame.*);
         }
