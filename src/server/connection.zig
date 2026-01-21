@@ -202,8 +202,8 @@ pub const Connection = struct {
             const sequence = ack.sequences[i];
             const key = @as(u24, @intCast(sequence));
             if (self.state.outputBackup.contains(key)) {
-                if (self.state.outputBackup.get(key)) |*frames_ptr| {
-                    const frames = frames_ptr.*;
+                if (self.state.outputBackup.get(key)) |*framesPtr| {
+                    const frames = framesPtr.*;
                     var idx: usize = 0;
                     while (idx < frames.len) : (idx += 1) {
                         const fptr = &frames[idx];
@@ -274,12 +274,8 @@ pub const Connection = struct {
         }
 
         self.state.lastInputSequence = @intCast(sequence);
-        for (set.frames) |*frameConst| {
-            var frame: *Frame = @constCast(frameConst); // make it mutable
-            if (frame.isSplit()) {
-                frame.shouldFree = false;
-            }
-            try self.handleFrame(frame.*);
+        for (set.frames) |frame| {
+            try self.handleFrame(frame);
         }
 
         self.sendAck(sequence);
@@ -377,51 +373,51 @@ pub const Connection = struct {
 
         const splitID: u16 = split.id;
 
-        const map_ptr = blk: {
+        const mapPtr = blk: {
             if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
                 break :blk existing;
             }
 
-            const new_map = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(splitID, new_map);
+            const newMap = std.AutoHashMap(u16, Frame).init(self.server.allocator);
+            try self.state.fragmentsQueue.put(splitID, newMap);
             break :blk self.state.fragmentsQueue.getPtr(splitID).?;
         };
 
-        if (map_ptr.contains(@intCast(split.frameIndex))) {
+        if (mapPtr.contains(@intCast(split.frameIndex))) {
             return;
         }
 
         var owned = frame;
         owned.shouldFree = true;
-        try map_ptr.put(@intCast(split.frameIndex), owned);
+        try mapPtr.put(@intCast(split.frameIndex), owned);
 
         var totalFragments: u16 = 0;
         {
-            var iter = map_ptr.iterator();
+            var iter = mapPtr.iterator();
             while (iter.next()) |entry| {
                 totalFragments = @max(totalFragments, entry.key_ptr.* + 1);
             }
         }
-        if (map_ptr.count() < totalFragments) {
+        if (mapPtr.count() < totalFragments) {
             return;
         }
 
-        var merged_len: usize = 0;
-        var frag_iter = map_ptr.iterator();
-        while (frag_iter.next()) |entry| {
-            merged_len += entry.value_ptr.payload.len;
+        var mergedLen: usize = 0;
+        var fragIter = mapPtr.iterator();
+        while (fragIter.next()) |entry| {
+            mergedLen += entry.value_ptr.payload.len;
         }
 
-        var merged = try self.server.allocator.alloc(u8, merged_len);
+        var merged = try self.server.allocator.alloc(u8, mergedLen);
         var pos: usize = 0;
 
-        var frag_iter2 = map_ptr.iterator();
-        while (frag_iter2.next()) |entry| {
+        var fragIter2 = mapPtr.iterator();
+        while (fragIter2.next()) |entry| {
             std.mem.copyForwards(u8, merged[pos .. pos + entry.value_ptr.payload.len], entry.value_ptr.payload);
             pos += entry.value_ptr.payload.len;
         }
 
-        map_ptr.deinit();
+        mapPtr.deinit();
         _ = self.state.fragmentsQueue.remove(splitID);
 
         try self.handleFrame(Frame{
@@ -503,12 +499,12 @@ pub const Connection = struct {
 
             var newFrame: Frame = undefined;
             if (frame.shouldFree) {
-                const frag_len = fragmentPayload.len;
-                const owned_frag = self.server.allocator.alloc(u8, frag_len) catch {
+                const fragLen = fragmentPayload.len;
+                const ownedFrag = self.server.allocator.alloc(u8, fragLen) catch {
                     return;
                 };
-                std.mem.copyForwards(u8, owned_frag, fragmentPayload);
-                newFrame = Frame.init(frame.reliability, owned_frag, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, .{
+                std.mem.copyForwards(u8, ownedFrag, fragmentPayload);
+                newFrame = Frame.init(frame.reliability, ownedFrag, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, .{
                     .id = splitID,
                     .size = @as(u32, @intCast(splitSize)),
                     .frameIndex = @as(u32, @intCast(i / maxSize)),
@@ -582,19 +578,19 @@ pub const Connection = struct {
 
         _ = self.state.outputBackup.remove(sequence);
 
-        var backup_buf = self.server.allocator.alloc(Frame, frames.len) catch {
+        var backupBuf = self.server.allocator.alloc(Frame, frames.len) catch {
             std.debug.print("Failed to alloc backup buffer\n", .{});
             return;
         };
 
         var i: usize = 0;
         while (i < frames.len) : (i += 1) {
-            backup_buf[i] = frames[i];
+            backupBuf[i] = frames[i];
         }
-        const backup_slice = backup_buf[0..frames.len];
+        const backupSlice = backupBuf[0..frames.len];
 
-        self.state.outputBackup.put(sequence, backup_slice) catch {
-            self.server.allocator.free(backup_slice);
+        self.state.outputBackup.put(sequence, backupSlice) catch {
+            self.server.allocator.free(backupSlice);
             std.debug.print("Failed to put output backup\n", .{});
             return;
         };
@@ -615,10 +611,10 @@ pub const Connection = struct {
             std.debug.print("Error serializing frame: {any}\n", .{err});
 
             _ = self.state.outputBackup.remove(sequence);
-            for (backup_slice) |*frame| {
+            for (backupSlice) |*frame| {
                 if (frame.shouldFree) frame.deinit(self.server.allocator);
             }
-            self.server.allocator.free(backup_slice);
+            self.server.allocator.free(backupSlice);
             return;
         };
 
@@ -707,7 +703,6 @@ pub const ConnectionState = struct {
     inputOrderingQueue: std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)),
 
     fragmentsQueue: std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)),
-    packetFragments: std.AutoHashMap(u16, std.ArrayList([]const u8)),
 
     pub fn init(allocator: std.mem.Allocator) !ConnectionState {
         return ConnectionState{
@@ -728,7 +723,6 @@ pub const ConnectionState = struct {
             .inputOrderIndex = undefined,
             .inputOrderingQueue = std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)).init(allocator),
             .fragmentsQueue = std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)).init(allocator),
-            .packetFragments = std.AutoHashMap(u16, std.ArrayList([]const u8)).init(allocator),
         };
     }
 
@@ -779,11 +773,5 @@ pub const ConnectionState = struct {
             outerEntry.value_ptr.deinit();
         }
         self.fragmentsQueue.deinit();
-
-        var packetIter = self.packetFragments.iterator();
-        while (packetIter.next()) |entry| {
-            entry.value_ptr.deinit(allocator);
-        }
-        self.packetFragments.deinit();
     }
 };
