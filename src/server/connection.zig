@@ -376,56 +376,53 @@ pub const Connection = struct {
         };
 
         const splitID: u16 = split.id;
-        const index: u16 = @intCast(split.frameIndex);
-        const total: u16 = @intCast(split.size);
 
         const map_ptr = blk: {
             if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
                 break :blk existing;
             }
-            //
+
             const new_map = std.AutoHashMap(u16, Frame).init(self.server.allocator);
             try self.state.fragmentsQueue.put(splitID, new_map);
             break :blk self.state.fragmentsQueue.getPtr(splitID).?;
         };
 
-        if (map_ptr.contains(index)) {
+        if (map_ptr.contains(@intCast(split.frameIndex))) {
             return;
         }
 
         var owned = frame;
         owned.shouldFree = true;
-        try map_ptr.put(index, owned);
+        try map_ptr.put(@intCast(split.frameIndex), owned);
 
-        std.debug.print("{d}, {d}", .{ map_ptr.count(), total });
+        std.debug.print("Fragments received: {d}\n", .{map_ptr.count()});
 
-        if (map_ptr.count() < total) {
+        var totalFragments: u16 = 0;
+        {
+            var iter = map_ptr.iterator();
+            while (iter.next()) |entry| {
+                totalFragments = @max(totalFragments, entry.key_ptr.* + 1);
+            }
+        }
+        if (map_ptr.count() < totalFragments) {
             return;
         }
 
         var merged_len: usize = 0;
-        var i: u16 = 0;
-        while (i < total) : (i += 1) {
-            const frag = map_ptr.get(i) orelse {
-                return;
-            };
-            merged_len += frag.payload.len;
+        var frag_iter = map_ptr.iterator();
+        while (frag_iter.next()) |entry| {
+            merged_len += entry.value_ptr.payload.len;
         }
 
         var merged = try self.server.allocator.alloc(u8, merged_len);
         var pos: usize = 0;
 
-        i = 0;
-        while (i < total) : (i += 1) {
-            const frag = map_ptr.get(i).?;
-            std.mem.copyForwards(
-                u8,
-                merged[pos .. pos + frag.payload.len],
-                frag.payload,
-            );
-            pos += frag.payload.len;
+        var frag_iter2 = map_ptr.iterator();
+        while (frag_iter2.next()) |entry| {
+            std.mem.copyForwards(u8, merged[pos .. pos + entry.value_ptr.payload.len], entry.value_ptr.payload);
+            pos += entry.value_ptr.payload.len;
 
-            // frag.deinit(self.server.allocator);
+            if (entry.value_ptr.shouldFree) entry.value_ptr.deinit(self.server.allocator);
         }
 
         map_ptr.deinit();
