@@ -281,7 +281,7 @@ pub const Connection = struct {
         self.sendAck(sequence);
     }
 
-    pub fn handleFrame(self: *Connection, frame: Frame) !void {
+    pub fn handleFrame(self: *Connection, frame: Frame) anyerror!void {
         if (!self.active) return;
 
         if (frame.payload.len == 0) {
@@ -425,7 +425,16 @@ pub const Connection = struct {
         map_ptr.deinit();
         _ = self.state.fragmentsQueue.remove(split_id);
 
-        try self.handlePacket(merged);
+        try self.handleFrame(Frame{
+            .payload = merged,
+            .sequenceFrameIndex = frame.sequenceFrameIndex,
+            .reliability = frame.reliability,
+            .reliableFrameIndex = frame.reliableFrameIndex,
+            .orderedFrameIndex = frame.orderedFrameIndex,
+            .orderChannel = frame.orderChannel,
+            .splitInfo = null,
+            .shouldFree = true,
+        });
     }
 
     pub fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {
