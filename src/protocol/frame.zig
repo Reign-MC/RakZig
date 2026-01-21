@@ -47,6 +47,8 @@ pub const Frame = struct {
     pub fn deinit(self: *Frame, allocator: std.mem.Allocator) void {
         if (self.shouldFree) {
             allocator.free(self.payload);
+            // Prevent double frees
+            self.shouldFree = false;
         }
     }
 

@@ -104,6 +104,7 @@ pub const Connection = struct {
             var buffer: [1024]u8 = undefined;
             var writer = Writer.init(buffer[0..]);
 
+            // Should work if not change to .dupe
             buffer[0] = @intFromEnum(ID.NACK);
 
             const serialized = nack.serialize(&writer) catch {
@@ -626,10 +627,9 @@ pub const Connection = struct {
         const toRemove = @min(amount, queue.items.len);
         if (toRemove == 0) return;
 
-        for (queue.items[0..toRemove]) |frame| {
-            if (frame.shouldFree) {
-                self.server.allocator.free(frame.payload);
-            }
+        for (queue.items[0..toRemove]) |*constFrame| {
+            var frame: *Frame = @constCast(constFrame);
+            frame.deinit(self.server.allocator);
         }
 
         queue.replaceRange(self.server.allocator, 0, toRemove, &[_]Frame{}) catch |err| {
@@ -765,9 +765,8 @@ pub const ConnectionState = struct {
             var innerMap = outerEntry.value_ptr;
             var innerIter = innerMap.iterator();
             while (innerIter.next()) |entry| {
-                if (entry.value_ptr.shouldFree) {
-                    allocator.free(entry.value_ptr.payload);
-                }
+                var frame: *Frame = @constCast(entry.value_ptr);
+                frame.deinit(allocator);
             }
             outerEntry.value_ptr.deinit();
         }
