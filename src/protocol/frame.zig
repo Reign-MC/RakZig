@@ -93,16 +93,16 @@ pub const Frame = struct {
         }
 
         if (isFrameSplit) {
-            std.debug.print(
-                "SPLIT FRAME id={} idx={}/{}\n",
-                .{ splitInfo.?.id, splitInfo.?.frameIndex, splitInfo.?.size },
-            );
-
             splitInfo = Frame.SplitInfo{
                 .size = try reader.readU32BE(),
                 .id = try reader.readU16BE(),
                 .frameIndex = try reader.readU32BE(),
             };
+
+            std.debug.print(
+                "SPLIT FRAME id={} idx={}/{}\n",
+                .{ splitInfo.?.id, splitInfo.?.frameIndex, splitInfo.?.size },
+            );
         }
 
         const remaining = reader.buf.len - reader.pos;
