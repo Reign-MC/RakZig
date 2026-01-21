@@ -274,8 +274,11 @@ pub const Connection = struct {
         }
 
         self.state.lastInputSequence = @intCast(sequence);
-        for (set.frames) |frame| {
-            try self.handleFrame(frame);
+        for (set.frames) |*frame| {
+            if (frame.isSplit()) {
+                frame.shouldFree = false; // ownership moves to fragmentsQueue
+            }
+            try self.handleFrame(frame.*);
         }
 
         self.sendAck(sequence);
