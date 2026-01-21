@@ -46,7 +46,7 @@ pub const FrameSet = struct {
 
         var frames = std.ArrayList(Frame).initBuffer(&[_]Frame{});
 
-        while (reader.pos < reader.buf.len - 4) {
+        while (reader.pos < reader.buf.len) {
             const frame = try Frame.read(&reader);
             try frames.append(allocator, frame);
         }

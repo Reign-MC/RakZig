@@ -375,18 +375,18 @@ pub const Connection = struct {
             return;
         };
 
-        const split_id: u16 = split.id;
+        const splitID: u16 = split.id;
         const index: u16 = @intCast(split.frameIndex);
         const total: u16 = @intCast(split.size);
 
         const map_ptr = blk: {
-            if (self.state.fragmentsQueue.getPtr(split_id)) |existing| {
+            if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
                 break :blk existing;
             }
 
             const new_map = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(split_id, new_map);
-            break :blk self.state.fragmentsQueue.getPtr(split_id).?;
+            try self.state.fragmentsQueue.put(splitID, new_map);
+            break :blk self.state.fragmentsQueue.getPtr(splitID).?;
         };
 
         if (map_ptr.contains(index)) {
@@ -397,7 +397,7 @@ pub const Connection = struct {
         owned.shouldFree = true;
         try map_ptr.put(index, owned);
 
-        if (map_ptr.count() < total) {
+        if (map_ptr.count() < total - 1) {
             return;
         }
 
@@ -427,7 +427,7 @@ pub const Connection = struct {
         }
 
         map_ptr.deinit();
-        _ = self.state.fragmentsQueue.remove(split_id);
+        _ = self.state.fragmentsQueue.remove(splitID);
 
         try self.handleFrame(Frame{
             .payload = merged,
