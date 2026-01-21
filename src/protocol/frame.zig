@@ -66,7 +66,7 @@ pub const Frame = struct {
     pub fn read(reader: *Reader) !Frame {
         const rawFlags = try reader.readU8();
         const reliability: Reliability = @as(Reliability, @enumFromInt((rawFlags & 0b1110_0000) >> 5));
-        const flags = Flags.fromU8(rawFlags);
+        const isFrameSplit = (rawFlags & 0x10) != 0;
 
         const lengthBits = try reader.readU16BE();
         const payloadLength = (lengthBits + 7) / 8;
@@ -92,18 +92,21 @@ pub const Frame = struct {
             orderChannel = try reader.readU8();
         }
 
-        if (flags) |flag| {
-            if (flag.isSplit()) {
-                splitInfo = Frame.SplitInfo{
-                    .size = try reader.readU32BE(),
-                    .id = try reader.readU16BE(),
-                    .frameIndex = try reader.readU32BE(),
-                };
-            }
+        if (isFrameSplit) {
+            std.debug.print(
+                "SPLIT FRAME id={} idx={}/{}\n",
+                .{ splitInfo.?.id, splitInfo.?.frameIndex, splitInfo.?.size },
+            );
+
+            splitInfo = Frame.SplitInfo{
+                .size = try reader.readU32BE(),
+                .id = try reader.readU16BE(),
+                .frameIndex = try reader.readU32BE(),
+            };
         }
 
         const remaining = reader.buf.len - reader.pos;
-        const toRead = if (payloadLength > remaining) remaining else payloadLength;
+        const toRead = @min(payloadLength, remaining);
 
         const payload = try reader.read(toRead);
         return Frame.init(reliability, payload, orderChannel, reliableFrameIndex, sequenceFrameIndex, orderedFrameIndex, splitInfo, false);
