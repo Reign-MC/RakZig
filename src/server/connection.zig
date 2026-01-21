@@ -190,55 +190,6 @@ pub const Connection = struct {
         }
     }
 
-    pub fn handleSplitPacket(self: *Connection, splitID: u16, index: u16, total: u16, payload: []const u8) !?[]const u8 {
-        const headerSize: usize = 1 + 2 + 2 + 4;
-        if (payload.len < headerSize) return error.InvalidPacket;
-        const frameData = payload[headerSize..];
-
-        const fragList = self.state.packetFragments.get(splitID);
-        if (fragList == null) {
-            var newList = try std.ArrayList([]const u8).initCapacity(self.server.allocator, @intCast(total));
-            while (newList.items.len <= index) {
-                try newList.append(self.server.allocator, &[_]u8{}); // pad
-            }
-            newList.items[@intCast(index)] = frameData;
-            try self.state.packetFragments.put(splitID, newList);
-            return null;
-        }
-
-        var list = fragList.?;
-        while (list.items.len <= index) {
-            try list.append(self.server.allocator, &[_]u8{}); // pad
-        }
-        list.items[@intCast(index)] = frameData;
-
-        // check if all fragments are received
-        var complete = true;
-        for (list.items) |frag| {
-            if (frag.len == 0) {
-                complete = false;
-                break;
-            }
-        }
-        if (!complete) return null;
-
-        // merge fragments
-        var totalSize: usize = 0;
-        for (list.items) |frag| totalSize += frag.len;
-
-        var merged = try self.server.allocator.alloc(u8, totalSize);
-        var pos: usize = 0;
-        for (list.items) |frag| {
-            std.mem.copyForwards(u8, merged[pos .. pos + frag.len], frag);
-            pos += frag.len;
-        }
-
-        list.deinit(self.server.allocator);
-        _ = self.state.packetFragments.remove(splitID);
-
-        return merged;
-    }
-
     pub fn handleAck(self: *Connection, payload: []const u8) !void {
         if (!self.active) return;
 
@@ -324,11 +275,7 @@ pub const Connection = struct {
 
         self.state.lastInputSequence = @intCast(sequence);
         for (set.frames) |frame| {
-            if (frame.isSplit()) {
-                try self.handleSplitFrame(frame);
-            } else {
-                try self.handlePacket(frame.payload);
-            }
+            try self.handleFrame(frame);
         }
 
         self.sendAck(sequence);
@@ -419,145 +366,66 @@ pub const Connection = struct {
     }
 
     pub fn handleSplitFrame(self: *Connection, frame: Frame) !void {
-        const splitInfo = frame.splitInfo orelse {
+        const split = frame.splitInfo orelse {
             std.debug.print("Split frame missing split info\n", .{});
             return;
         };
 
-        std.debug.print("Handling split frame: {d}\n", .{splitInfo.id});
+        const split_id: u16 = split.id;
+        const index: u16 = @intCast(split.frameIndex);
+        const total: u16 = @intCast(split.size);
 
-        const id = splitInfo.id;
-        const index: u16 = @intCast(splitInfo.frameIndex);
-        const total = splitInfo.size;
+        const map_ptr = blk: {
+            if (self.state.fragmentsQueue.getPtr(split_id)) |existing| {
+                break :blk existing;
+            }
 
-        const fragmentMap = self.state.fragmentsQueue.get(id);
+            const new_map = std.AutoHashMap(u16, Frame).init(self.server.allocator);
+            try self.state.fragmentsQueue.put(split_id, new_map);
+            break :blk self.state.fragmentsQueue.getPtr(split_id).?;
+        };
 
-        if (fragmentMap == null) {
-            var newMap = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try newMap.put(index, frame);
-            try self.state.fragmentsQueue.put(id, newMap);
+        if (map_ptr.contains(index)) {
             return;
         }
 
-        var map = fragmentMap.?;
-        try map.put(index, frame);
+        var owned = frame;
+        owned.shouldFree = true;
+        try map_ptr.put(index, owned);
 
-        var complete = true;
-        for (0..total) |i| {
-            if (!map.contains(@intCast(i))) {
-                complete = false;
-                break;
-            }
-        }
-        if (!complete) return;
-
-        var totalSize: usize = 0;
-        for (0..total) |i| {
-            totalSize += map.get(@intCast(i)).?.payload.len;
+        if (map_ptr.count() < total) {
+            return;
         }
 
-        var merged = try self.server.allocator.alloc(u8, totalSize);
+        var merged_len: usize = 0;
+        var i: u16 = 0;
+        while (i < total) : (i += 1) {
+            const frag = map_ptr.get(i) orelse {
+                return;
+            };
+            merged_len += frag.payload.len;
+        }
+
+        var merged = try self.server.allocator.alloc(u8, merged_len);
         var pos: usize = 0;
-        for (0..total) |i| {
-            var frag = map.get(@intCast(i)).?;
-            std.mem.copyForwards(u8, merged[pos .. pos + frag.payload.len], frag.payload);
+
+        i = 0;
+        while (i < total) : (i += 1) {
+            var frag = map_ptr.get(i).?;
+            std.mem.copyForwards(
+                u8,
+                merged[pos .. pos + frag.payload.len],
+                frag.payload,
+            );
             pos += frag.payload.len;
-            if (frag.shouldFree) frag.deinit(self.server.allocator);
+
+            frag.deinit(self.server.allocator);
         }
 
-        map.deinit();
-        _ = self.state.fragmentsQueue.remove(id);
+        map_ptr.deinit();
+        _ = self.state.fragmentsQueue.remove(split_id);
 
-        const mergedFrame = Frame.init(
-            frame.reliability,
-            merged,
-            frame.orderChannel,
-            frame.reliableFrameIndex,
-            frame.sequenceFrameIndex,
-            frame.orderedFrameIndex,
-            null,
-            true,
-        );
-
-        try self.handlePacket(mergedFrame.payload);
-        // const id = splitInfo.id;
-        // const index = splitInfo.frameIndex;
-        // const size = splitInfo.size;
-        //
-        // const payloadLen = frame.payload.len;
-        // const ownedPayload = try self.server.allocator.alloc(u8, payloadLen);
-        // std.mem.copyForwards(u8, ownedPayload, frame.payload);
-        //
-        // const frameCopy = Frame.init(
-        //     frame.reliability,
-        //     ownedPayload,
-        //     frame.orderChannel,
-        //     frame.reliableFrameIndex,
-        //     frame.sequenceFrameIndex,
-        //     frame.orderedFrameIndex,
-        //     frame.splitInfo,
-        //     true,
-        // );
-        //
-        // const fragmentMap = self.state.fragmentsQueue.get(id);
-        //
-        // if (fragmentMap == null) {
-        //     var newFragment = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-        //     try newFragment.put(@intCast(index), frameCopy);
-        //     try self.state.fragmentsQueue.put(id, newFragment);
-        //     return;
-        // }
-        //
-        // var fragment = fragmentMap.?;
-        //
-        // if (fragment.contains(@intCast(index))) {
-        //     self.server.allocator.free(ownedPayload);
-        //     return;
-        // }
-        //
-        // try fragment.put(@intCast(index), frameCopy);
-        //
-        // if (fragment.count() != size) {
-        //     return;
-        // }
-        //
-        // var buffer = try self.server.allocator.alloc(u8, 1492);
-        // defer self.server.allocator.free(buffer);
-        // var writer = Writer.init(buffer[0..]);
-        //
-        // var i: u16 = 0;
-        // while (i < size) : (i += 1) {
-        //     const part = fragment.get(i) orelse return;
-        //     try writer.write(part.payload);
-        // }
-        //
-        // const merged_len = writer.pos;
-        // const merged_buf = try self.server.allocator.alloc(u8, merged_len);
-        // std.mem.copyForwards(u8, merged_buf, writer.buf[0..merged_len]);
-        // var mergedFrame = Frame.init(
-        //     frame.reliability,
-        //     merged_buf,
-        //     frame.orderChannel,
-        //     frame.reliableFrameIndex,
-        //     frame.sequenceFrameIndex,
-        //     frame.orderedFrameIndex,
-        //     null,
-        //     true,
-        // );
-        // defer mergedFrame.deinit(self.server.allocator);
-        //
-        // var iter = fragment.iterator();
-        // while (iter.next()) |entry| {
-        //     entry.value_ptr.*.deinit(self.server.allocator);
-        // }
-        //
-        // fragment.deinit();
-        // _ = self.state.fragmentsQueue.remove(id);
-        //
-        // const rel = mergedFrame.reliability;
-        // if (!rel.isSequenced() and !rel.isOrdered()) {
-        //     try self.handlePacket(mergedFrame.payload);
-        // }
+        try self.handlePacket(merged);
     }
 
     pub fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {
@@ -718,15 +586,11 @@ pub const Connection = struct {
         const backup_slice = backup_buf[0..frames.len];
 
         self.state.outputBackup.put(sequence, backup_slice) catch {
-            // Ownership of payloads remains with the queue on failure to insert
-            // into the backup map; free only the temporary array of Frame structs.
             self.server.allocator.free(backup_slice);
             std.debug.print("Failed to put output backup\n", .{});
             return;
         };
 
-        // Transfer ownership of payloads from the queued frames to the backup
-        // copy so cleanupSentFrames doesn't free them (backup will free later).
         var t: usize = 0;
         while (t < framesToSend) : (t += 1) {
             self.state.outputFrameQueue.items[t].shouldFree = false;
@@ -883,7 +747,6 @@ pub const ConnectionState = struct {
         }
         self.inputOrderingQueue.deinit();
 
-        // Clean up any backed-up frames and free their backing buffers.
         var backupIter = self.outputBackup.iterator();
         while (backupIter.next()) |entry| {
             const frames = entry.value_ptr.*;
