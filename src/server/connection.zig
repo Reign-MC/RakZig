@@ -397,7 +397,9 @@ pub const Connection = struct {
         owned.shouldFree = true;
         try map_ptr.put(index, owned);
 
-        if (map_ptr.count() < total - 1) {
+        std.debug.print("{d}, {d}", .{ map_ptr.count(), total });
+
+        if (map_ptr.count() < total) {
             return;
         }
 
