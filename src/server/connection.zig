@@ -395,8 +395,6 @@ pub const Connection = struct {
         owned.shouldFree = true;
         try map_ptr.put(@intCast(split.frameIndex), owned);
 
-        std.debug.print("Fragments received: {d}\n", .{map_ptr.count()});
-
         var totalFragments: u16 = 0;
         {
             var iter = map_ptr.iterator();
@@ -421,8 +419,6 @@ pub const Connection = struct {
         while (frag_iter2.next()) |entry| {
             std.mem.copyForwards(u8, merged[pos .. pos + entry.value_ptr.payload.len], entry.value_ptr.payload);
             pos += entry.value_ptr.payload.len;
-
-            // if (entry.value_ptr.shouldFree) entry.value_ptr.deinit(self.server.allocator);
         }
 
         map_ptr.deinit();

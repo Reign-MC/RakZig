@@ -98,11 +98,6 @@ pub const Frame = struct {
                 .id = try reader.readU16BE(),
                 .frameIndex = try reader.readU32BE(),
             };
-
-            std.debug.print(
-                "SPLIT FRAME id={} idx={}/{}\n",
-                .{ splitInfo.?.id, splitInfo.?.frameIndex, splitInfo.?.size },
-            );
         }
 
         const remaining = reader.buf.len - reader.pos;
