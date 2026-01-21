@@ -419,7 +419,7 @@ pub const Connection = struct {
             );
             pos += frag.payload.len;
 
-            frag.deinit(self.server.allocator);
+            // frag.deinit(self.server.allocator);
         }
 
         map_ptr.deinit();
