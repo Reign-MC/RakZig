@@ -422,7 +422,7 @@ pub const Connection = struct {
             std.mem.copyForwards(u8, merged[pos .. pos + entry.value_ptr.payload.len], entry.value_ptr.payload);
             pos += entry.value_ptr.payload.len;
 
-            if (entry.value_ptr.shouldFree) entry.value_ptr.deinit(self.server.allocator);
+            // if (entry.value_ptr.shouldFree) entry.value_ptr.deinit(self.server.allocator);
         }
 
         map_ptr.deinit();
