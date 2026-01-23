@@ -366,29 +366,31 @@ pub const Connection = struct {
     }
 
     pub fn handleSplitFrame(self: *Connection, frame: Frame) !void {
-        const split = frame.splitInfo orelse return;
+        const split = frame.splitInfo orelse {
+            std.debug.print("Split frame missing split info\n", .{});
+            return;
+        };
 
-        const splitId: u16 = split.id;
+        const splitID: u16 = split.id;
         const expected: u32 = split.size;
-        const fragIndex: u32 = split.frameIndex;
-
-        std.debug.print("{d} {d} {d}\n", .{ splitId, expected, fragIndex });
 
         const mapPtr = blk: {
-            if (self.state.fragmentsQueue.getPtr(splitId)) |existing| {
+            if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
                 break :blk existing;
             }
 
             const newMap = std.AutoHashMap(u32, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(splitId, newMap);
-            break :blk self.state.fragmentsQueue.getPtr(splitId).?;
+            try self.state.fragmentsQueue.put(splitID, newMap);
+            break :blk self.state.fragmentsQueue.getPtr(splitID).?;
         };
 
-        if (mapPtr.contains(fragIndex)) {
+        const frag_index = split.frameIndex;
+
+        if (mapPtr.contains(frag_index)) {
             return;
         }
 
-        try mapPtr.put(fragIndex, frame);
+        try mapPtr.put(frag_index, frame);
 
         if (mapPtr.count() < expected) {
             return;
@@ -396,20 +398,20 @@ pub const Connection = struct {
 
         const base = mapPtr.get(0) orelse {
             mapPtr.deinit();
-            _ = self.state.fragmentsQueue.remove(splitId);
+            _ = self.state.fragmentsQueue.remove(splitID);
             return;
         };
 
         var mergedLen: usize = 0;
-        var i: u32 = 0;
+        var i: u16 = 0;
         while (i < expected) : (i += 1) {
             const frag = mapPtr.get(i) orelse unreachable;
             mergedLen += frag.payload.len;
         }
 
+        var pos: usize = 0;
         var merged = try self.server.allocator.alloc(u8, mergedLen);
 
-        var pos: usize = 0;
         i = 0;
         while (i < expected) : (i += 1) {
             const frag = mapPtr.get(i) orelse unreachable;
@@ -422,7 +424,7 @@ pub const Connection = struct {
         }
 
         mapPtr.deinit();
-        _ = self.state.fragmentsQueue.remove(splitId);
+        _ = self.state.fragmentsQueue.remove(splitID);
 
         try self.handleFrame(Frame{
             .payload = merged,
