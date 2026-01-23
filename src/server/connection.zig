@@ -372,6 +372,8 @@ pub const Connection = struct {
         const expected: u32 = split.size;
         const fragIndex: u32 = split.frameIndex;
 
+        std.debug.print("{d} {d} {d}\n", .{ splitId, expected, fragIndex });
+
         const mapPtr = blk: {
             if (self.state.fragmentsQueue.getPtr(splitId)) |existing| {
                 break :blk existing;
