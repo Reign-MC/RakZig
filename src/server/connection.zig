@@ -602,7 +602,7 @@ pub const Connection = struct {
         var i: usize = 0;
         while (i < frames.len) : (i += 1) {
             backupBuf[i] = frames[i];
-            backupBuf[i].shouldFree = false;
+            backupBuf[i].shouldFree = true;
         }
         const backupSlice = backupBuf[0..frames.len];
 
