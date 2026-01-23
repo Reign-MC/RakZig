@@ -371,75 +371,76 @@ pub const Connection = struct {
             return;
         };
 
-        const splitID: u16 = split.id;
-        const expected: u32 = split.size;
-
-        std.debug.print("{d} {d} {d}\n", .{ split.id, split.frameIndex, split.size });
-
-        const mapPtr = blk: {
-            if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
-                break :blk existing;
+        if (self.state.fragmentsQueue.getPtr(split.id)) |frag| {
+            if (frag.contains(split.frameIndex)) {
+                return;
             }
 
-            const newMap = std.AutoHashMap(u32, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(splitID, newMap);
-            break :blk self.state.fragmentsQueue.getPtr(splitID).?;
-        };
+            const copy = try self.server.allocator.dupe(u8, frame.payload);
+            const frameCopy = Frame.init(frame.reliability, copy, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, frame.splitInfo, true);
 
-        const frag_index = split.frameIndex;
+            frag.put(split.frameIndex, frameCopy) catch {
+                self.server.allocator.free(copy);
+                return;
+            };
 
-        if (mapPtr.contains(frag_index)) {
-            return;
+            if (frag.count() == split.size) {
+                var stream = std.io.Writer.Allocating.init(self.server.allocator);
+                var writer = stream.writer;
+
+                var i: u32 = 0;
+                while (i < split.frameIndex) : (i += 1) {
+                    const splitFrame = frag.get(split.frameIndex) orelse return;
+
+                    _ = try writer.write(splitFrame.payload);
+                }
+
+                const newPayload = try stream.toOwnedSlice();
+
+                var newFrame = Frame.init(frame.reliability, newPayload, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, null, true);
+
+                var fragIter = frag.iterator();
+                while (fragIter.next()) |entry| {
+                    entry.value_ptr.deinit(self.server.allocator);
+                }
+                frag.deinit();
+
+                _ = self.state.fragmentsQueue.remove(split.id);
+
+                if (newFrame.reliability.isSequenced()) {
+                    self.handleSequencedFrame(newFrame);
+                } else if (newFrame.reliability.isOrdered()) {
+                    self.handleOrderedFrame(newFrame);
+                } else {
+                    self.handlePacket(newFrame.payload) catch |err| {
+                        std.debug.print("Error handling packet: {any}\n", .{err});
+                    };
+                }
+
+                newFrame.deinit(self.server.allocator);
+            }
+        } else {
+            var newFragment = std.AutoHashMap(u32, Frame).init(self.server.allocator);
+
+            const payloadCopy = self.server.allocator.dupe(u8, frame.payload) catch {
+                return;
+            };
+
+            const frameCopy = Frame.init(frame.reliability, payloadCopy, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, frame.splitInfo, true);
+
+            newFragment.put(split.frameIndex, frameCopy) catch {
+                self.server.allocator.free(payloadCopy);
+                return;
+            };
+            self.state.fragmentsQueue.put(split.id, newFragment) catch {
+                var iter = newFragment.iterator();
+                while (iter.next()) |entry| {
+                    entry.value_ptr.deinit(self.server.allocator);
+                }
+                newFragment.deinit();
+                return;
+            };
         }
-
-        try mapPtr.put(frag_index, frame);
-
-        if (mapPtr.count() < expected) {
-            return;
-        }
-
-        _ = mapPtr.get(0) orelse {
-            mapPtr.deinit();
-            _ = self.state.fragmentsQueue.remove(splitID);
-            return;
-        };
-
-        var mergedLen: usize = 0;
-        var i: u16 = 0;
-        while (i < expected) : (i += 1) {
-            const frag = mapPtr.get(i) orelse unreachable;
-            mergedLen += frag.payload.len;
-        }
-
-        var pos: usize = 0;
-        var merged = try self.server.allocator.alloc(u8, mergedLen);
-
-        i = 0;
-        while (i < expected) : (i += 1) {
-            const frag = mapPtr.get(i) orelse unreachable;
-            std.debug.print("Frag Header={d}\n", .{frag.payload[0]});
-            std.mem.copyForwards(
-                u8,
-                merged[pos .. pos + frag.payload.len],
-                frag.payload,
-            );
-            pos += frag.payload.len;
-        }
-
-        mapPtr.deinit();
-        _ = self.state.fragmentsQueue.remove(splitID);
-
-        std.debug.print("Merged Size={d}\nMerged Header={d}\n", .{ merged.len, merged[0] });
-        try self.handleFrame(Frame{
-            .payload = merged,
-            .reliability = .Unreliable,
-            .reliableFrameIndex = null,
-            .sequenceFrameIndex = null,
-            .orderedFrameIndex = null,
-            .orderChannel = null,
-            .splitInfo = null,
-            .shouldFree = true,
-        });
     }
 
     pub fn frameFromPayload(self: *Connection, payload: []const u8) !Frame {
