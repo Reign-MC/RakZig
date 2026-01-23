@@ -389,8 +389,8 @@ pub const Connection = struct {
                 var writer = stream.writer;
 
                 var i: u32 = 0;
-                while (i < split.frameIndex) : (i += 1) {
-                    const splitFrame = frag.get(split.frameIndex) orelse return;
+                while (i < split.size) : (i += 1) {
+                    const splitFrame = frag.get(i) orelse return;
 
                     _ = try writer.write(splitFrame.payload);
                 }
