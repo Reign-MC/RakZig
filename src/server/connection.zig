@@ -366,31 +366,27 @@ pub const Connection = struct {
     }
 
     pub fn handleSplitFrame(self: *Connection, frame: Frame) !void {
-        const split = frame.splitInfo orelse {
-            std.debug.print("Split frame missing split info\n", .{});
-            return;
-        };
+        const split = frame.splitInfo orelse return;
 
-        const split_id: u16 = split.id;
-        const expected: u16 = @intCast(split.size);
+        const splitId: u16 = split.id;
+        const expected: u32 = split.size;
+        const fragIndex: u32 = split.frameIndex;
 
         const mapPtr = blk: {
-            if (self.state.fragmentsQueue.getPtr(split_id)) |existing| {
+            if (self.state.fragmentsQueue.getPtr(splitId)) |existing| {
                 break :blk existing;
             }
 
-            const newMap = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(split_id, newMap);
-            break :blk self.state.fragmentsQueue.getPtr(split_id).?;
+            const newMap = std.AutoHashMap(u32, Frame).init(self.server.allocator);
+            try self.state.fragmentsQueue.put(splitId, newMap);
+            break :blk self.state.fragmentsQueue.getPtr(splitId).?;
         };
 
-        const frag_index: u16 = @intCast(split.frameIndex);
-
-        if (mapPtr.contains(frag_index)) {
+        if (mapPtr.contains(fragIndex)) {
             return;
         }
 
-        try mapPtr.put(frag_index, frame);
+        try mapPtr.put(fragIndex, frame);
 
         if (mapPtr.count() < expected) {
             return;
@@ -398,18 +394,18 @@ pub const Connection = struct {
 
         const base = mapPtr.get(0) orelse {
             mapPtr.deinit();
-            _ = self.state.fragmentsQueue.remove(split_id);
+            _ = self.state.fragmentsQueue.remove(splitId);
             return;
         };
 
-        var merged_len: usize = 0;
-        var i: u16 = 0;
+        var mergedLen: usize = 0;
+        var i: u32 = 0;
         while (i < expected) : (i += 1) {
             const frag = mapPtr.get(i) orelse unreachable;
-            merged_len += frag.payload.len;
+            mergedLen += frag.payload.len;
         }
 
-        var merged = try self.server.allocator.alloc(u8, merged_len);
+        var merged = try self.server.allocator.alloc(u8, mergedLen);
 
         var pos: usize = 0;
         i = 0;
@@ -424,7 +420,7 @@ pub const Connection = struct {
         }
 
         mapPtr.deinit();
-        _ = self.state.fragmentsQueue.remove(split_id);
+        _ = self.state.fragmentsQueue.remove(splitId);
 
         try self.handleFrame(Frame{
             .payload = merged,
@@ -707,7 +703,7 @@ pub const ConnectionState = struct {
     inputOrderIndex: [Constants.MAX_ACTIVE_FRAGMENTATIONS]u32,
     inputOrderingQueue: std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)),
 
-    fragmentsQueue: std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)),
+    fragmentsQueue: std.AutoHashMap(u16, std.AutoHashMap(u32, Frame)),
 
     pub fn init(allocator: std.mem.Allocator) !ConnectionState {
         return ConnectionState{
@@ -727,7 +723,7 @@ pub const ConnectionState = struct {
             .inputHighestSequenceIndex = undefined,
             .inputOrderIndex = undefined,
             .inputOrderingQueue = std.AutoHashMap(u32, std.AutoHashMap(u32, Frame)).init(allocator),
-            .fragmentsQueue = std.AutoHashMap(u16, std.AutoHashMap(u16, Frame)).init(allocator),
+            .fragmentsQueue = std.AutoHashMap(u16, std.AutoHashMap(u32, Frame)).init(allocator),
         };
     }
 
