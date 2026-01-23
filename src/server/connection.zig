@@ -417,6 +417,7 @@ pub const Connection = struct {
         i = 0;
         while (i < expected) : (i += 1) {
             const frag = mapPtr.get(i) orelse unreachable;
+            std.debug.print("Frag Header={d}\n", .{frag.payload[0]});
             std.mem.copyForwards(
                 u8,
                 merged[pos .. pos + frag.payload.len],
