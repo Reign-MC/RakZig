@@ -385,19 +385,24 @@ pub const Connection = struct {
             };
 
             if (frag.count() == split.size) {
-                var stream = std.io.Writer.Allocating.init(self.server.allocator);
-                var writer = stream.writer;
+                var mergedLen: usize = 0;
+                var iter = frag.iterator();
+                while (iter.next()) |entry| {
+                    mergedLen += entry.value_ptr.payload.len;
+                }
+
+                var merged = try self.server.allocator.alloc(u8, mergedLen);
 
                 var i: u32 = 0;
+                var pos: usize = 0;
                 while (i < split.size) : (i += 1) {
                     const splitFrame = frag.get(i) orelse return;
 
-                    _ = try writer.write(splitFrame.payload);
+                    std.mem.copyForwards(u8, merged[pos..], splitFrame.payload);
+                    pos += splitFrame.payload.len;
                 }
 
-                const newPayload = try stream.toOwnedSlice();
-
-                var newFrame = Frame.init(frame.reliability, newPayload, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, null, true);
+                var newFrame = Frame.init(frame.reliability, merged, frame.orderChannel, frame.reliableFrameIndex, frame.sequenceFrameIndex, frame.orderedFrameIndex, null, true);
 
                 var fragIter = frag.iterator();
                 while (fragIter.next()) |entry| {
