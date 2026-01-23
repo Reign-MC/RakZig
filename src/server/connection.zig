@@ -398,7 +398,7 @@ pub const Connection = struct {
             return;
         }
 
-        const base = mapPtr.get(0) orelse {
+        _ = mapPtr.get(0) orelse {
             mapPtr.deinit();
             _ = self.state.fragmentsQueue.remove(splitID);
             return;
@@ -430,11 +430,11 @@ pub const Connection = struct {
 
         try self.handleFrame(Frame{
             .payload = merged,
-            .reliability = base.reliability,
-            .reliableFrameIndex = base.reliableFrameIndex,
+            .reliability = .Unreliable,
+            .reliableFrameIndex = null,
             .sequenceFrameIndex = null,
             .orderedFrameIndex = null,
-            .orderChannel = base.orderChannel,
+            .orderChannel = null,
             .splitInfo = null,
             .shouldFree = true,
         });
