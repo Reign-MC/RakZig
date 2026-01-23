@@ -371,62 +371,68 @@ pub const Connection = struct {
             return;
         };
 
-        const splitID: u16 = split.id;
+        const split_id: u16 = split.id;
+        const expected: u16 = @intCast(split.size);
 
         const mapPtr = blk: {
-            if (self.state.fragmentsQueue.getPtr(splitID)) |existing| {
+            if (self.state.fragmentsQueue.getPtr(split_id)) |existing| {
                 break :blk existing;
             }
 
             const newMap = std.AutoHashMap(u16, Frame).init(self.server.allocator);
-            try self.state.fragmentsQueue.put(splitID, newMap);
-            break :blk self.state.fragmentsQueue.getPtr(splitID).?;
+            try self.state.fragmentsQueue.put(split_id, newMap);
+            break :blk self.state.fragmentsQueue.getPtr(split_id).?;
         };
 
-        if (mapPtr.contains(@intCast(split.frameIndex))) {
+        const frag_index: u16 = @intCast(split.frameIndex);
+
+        if (mapPtr.contains(frag_index)) {
             return;
         }
 
-        const owned = frame;
-        // owned.shouldFree = true;
-        try mapPtr.put(@intCast(split.frameIndex), owned);
+        try mapPtr.put(frag_index, frame);
 
-        var totalFragments: u16 = 0;
-        {
-            var iter = mapPtr.iterator();
-            while (iter.next()) |entry| {
-                totalFragments = @max(totalFragments, entry.key_ptr.* + 1);
-            }
-        }
-        if (mapPtr.count() < totalFragments) {
+        if (mapPtr.count() < expected) {
             return;
         }
 
-        var mergedLen: usize = 0;
-        var fragIter = mapPtr.iterator();
-        while (fragIter.next()) |entry| {
-            mergedLen += entry.value_ptr.payload.len;
+        const base = mapPtr.get(0) orelse {
+            mapPtr.deinit();
+            _ = self.state.fragmentsQueue.remove(split_id);
+            return;
+        };
+
+        var merged_len: usize = 0;
+        var i: u16 = 0;
+        while (i < expected) : (i += 1) {
+            const frag = mapPtr.get(i) orelse unreachable;
+            merged_len += frag.payload.len;
         }
 
-        var merged = try self.server.allocator.alloc(u8, mergedLen);
+        var merged = try self.server.allocator.alloc(u8, merged_len);
+
         var pos: usize = 0;
-
-        var fragIter2 = mapPtr.iterator();
-        while (fragIter2.next()) |entry| {
-            std.mem.copyForwards(u8, merged[pos .. pos + entry.value_ptr.payload.len], entry.value_ptr.payload);
-            pos += entry.value_ptr.payload.len;
+        i = 0;
+        while (i < expected) : (i += 1) {
+            const frag = mapPtr.get(i) orelse unreachable;
+            std.mem.copyForwards(
+                u8,
+                merged[pos .. pos + frag.payload.len],
+                frag.payload,
+            );
+            pos += frag.payload.len;
         }
 
         mapPtr.deinit();
-        _ = self.state.fragmentsQueue.remove(splitID);
+        _ = self.state.fragmentsQueue.remove(split_id);
 
         try self.handleFrame(Frame{
             .payload = merged,
-            .sequenceFrameIndex = frame.sequenceFrameIndex,
-            .reliability = frame.reliability,
-            .reliableFrameIndex = frame.reliableFrameIndex,
-            .orderedFrameIndex = frame.orderedFrameIndex,
-            .orderChannel = frame.orderChannel,
+            .reliability = base.reliability,
+            .reliableFrameIndex = base.reliableFrameIndex,
+            .sequenceFrameIndex = base.sequenceFrameIndex,
+            .orderedFrameIndex = base.orderedFrameIndex,
+            .orderChannel = base.orderChannel,
             .splitInfo = null,
             .shouldFree = true,
         });
