@@ -428,7 +428,7 @@ pub const Connection = struct {
         mapPtr.deinit();
         _ = self.state.fragmentsQueue.remove(splitID);
 
-        std.debug.print("{d}\n", .{merged.len});
+        std.debug.print("Merged Size={d}\nMerged Header={d}\n", .{ merged.len, merged[0] });
         try self.handleFrame(Frame{
             .payload = merged,
             .reliability = .Unreliable,
